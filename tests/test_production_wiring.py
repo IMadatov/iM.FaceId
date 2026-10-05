@@ -17,6 +17,12 @@ def test_production_startup_fails_clearly_when_pipeline_init_fails(monkeypatch):
 
 def test_production_attaches_pipeline_and_store(monkeypatch):
     sentinel_pipe, sentinel_store = object(), object()
+
+    class _Ready:
+        def ready(self):
+            return True
+
+    sentinel_live = _Ready()
     monkeypatch.setattr(
         "app.pipeline.onnx_insightface.InsightFacePipeline",
         lambda model_dir, **kwargs: sentinel_pipe,
@@ -25,7 +31,12 @@ def test_production_attaches_pipeline_and_store(monkeypatch):
         "app.store.qdrant.QdrantFaceStore.from_settings",
         classmethod(lambda cls, settings: sentinel_store),
     )
+    monkeypatch.setattr(
+        "app.pipeline.onnx_liveness.load_liveness_checker",
+        lambda *args, **kwargs: sentinel_live,
+    )
     app = create_app(testing=False)
     with TestClient(app):
         assert app.state.pipeline is sentinel_pipe
         assert app.state.store is sentinel_store
+        assert app.state.liveness is sentinel_live

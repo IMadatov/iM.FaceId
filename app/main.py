@@ -10,6 +10,7 @@ from app.errors import (
     FaceDetectionError,
     FaceNotFoundError,
     InvalidImageError,
+    LivenessFailedError,
 )
 
 
@@ -21,6 +22,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
         InvalidImageError: 400,
         FaceNotFoundError: 404,
         FaceDetectionError: 422,
+        LivenessFailedError: 422,
         DependencyUnavailableError: 503,
     }
     for exc_type, status in mapping.items():
@@ -58,6 +60,17 @@ async def _production_lifespan(app: FastAPI):
         raise RuntimeError(
             f"Qdrant store init failed (url={settings.qdrant_url!r}): {exc}"
         ) from exc
+    from app.pipeline.onnx_liveness import load_liveness_checker
+
+    app.state.liveness = load_liveness_checker(
+        settings.liveness_model_path, crop_scale=settings.liveness_crop_scale
+    )
+    if not app.state.liveness.ready():
+        logger.warning(
+            "Liveness model not loaded from %r — requests with liveness=true will return 503. "
+            "Run: python scripts/download_liveness_model.py",
+            settings.liveness_model_path,
+        )
     yield
 
 
@@ -70,10 +83,12 @@ def create_app(*, testing: bool = False) -> FastAPI:
     app.state.testing = testing
     if testing:
         from app.pipeline.fake import FakeFacePipeline
+        from app.pipeline.fake_liveness import FakeLivenessChecker
         from app.store.memory import MemoryFaceStore
 
         app.state.pipeline = FakeFacePipeline()
         app.state.store = MemoryFaceStore()
+        app.state.liveness = FakeLivenessChecker()
     _register_exception_handlers(app)
     app.include_router(router)
     return app

@@ -160,6 +160,51 @@ def test_groups_rejects_min_size_below_two():
     assert r.status_code == 400
 
 
+def test_enroll_liveness_fail_422():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    from app.pipeline.fake_liveness import FakeLivenessChecker
+
+    app.state.liveness = FakeLivenessChecker(force_spoof=True)
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _img_bytes(120), "image/png")},
+        data={"liveness": "true"},
+    )
+    assert r.status_code == 422
+    assert "liveness" in r.json()["detail"].lower()
+
+
+def test_enroll_liveness_pass_returns_score():
+    c = _client()
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _img_bytes(120), "image/png")},
+        data={"liveness": "true"},
+    )
+    assert r.status_code == 201
+    assert r.json()["liveness_score"] is not None
+    assert r.json()["liveness_score"] >= 0.5
+
+
+def test_enroll_liveness_unavailable_503():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    from app.pipeline.fake_liveness import UnavailableLivenessChecker
+
+    app.state.liveness = UnavailableLivenessChecker()
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _img_bytes(120), "image/png")},
+        data={"liveness": "true"},
+    )
+    assert r.status_code == 503
+
+
 def test_groups_rejects_when_over_max_faces():
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()

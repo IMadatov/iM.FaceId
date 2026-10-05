@@ -20,3 +20,10 @@ def store_dep(request: Request):
     if store is None:
         raise DependencyUnavailableError("face store not configured")
     return store
+
+
+def liveness_dep(request: Request):
+    checker = getattr(request.app.state, "liveness", None)
+    if checker is None:
+        raise DependencyUnavailableError("liveness checker not configured")
+    return checker

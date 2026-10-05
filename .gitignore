@@ -8,3 +8,4 @@ models/
 *.onnx
 .idea/
 .vscode/
+/graphify-out

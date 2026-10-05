@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.api.schemas import (
     DeleteResponse,
@@ -14,8 +14,8 @@ from app.api.schemas import (
     VerifyResponse,
 )
 from app.config import Settings
-from app.deps import pipeline_dep, settings_dep, store_dep
-from app.errors import FaceNotFoundError
+from app.deps import liveness_dep, pipeline_dep, settings_dep, store_dep
+from app.errors import DependencyUnavailableError, FaceNotFoundError
 from app.imaging import decode_and_resize
 from app.matching.cosine import cosine_similarity, is_match
 from app.matching.grouping import group_similar_faces
@@ -23,14 +23,24 @@ from app.matching.grouping import group_similar_faces
 router = APIRouter()
 
 
-async def _embed_upload(image: UploadFile, settings: Settings, pipeline):
+async def _decode_upload(image: UploadFile, settings: Settings):
     data = await image.read()
-    img = decode_and_resize(
+    return decode_and_resize(
         data,
         max_side=settings.max_image_side,
         max_bytes=settings.max_upload_bytes,
     )
-    return pipeline.embed_bgr(img)
+
+
+def _maybe_liveness(img, *, liveness: bool, settings: Settings, checker):
+    if not liveness:
+        return None
+    if not checker.ready():
+        raise DependencyUnavailableError(
+            "liveness model not available "
+            "(run scripts/download_liveness_model.py)"
+        )
+    return checker.ensure_live(img, threshold=settings.liveness_threshold)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -45,14 +55,20 @@ def health(
 @router.post("/v1/faces", response_model=FaceIdResponse, status_code=201)
 async def enroll_face(
     image: UploadFile = File(...),
+    liveness: bool = Form(False),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
+    checker=Depends(liveness_dep),
 ) -> FaceIdResponse:
-    vector = await _embed_upload(image, settings, pipeline)
+    img = await _decode_upload(image, settings)
+    live_score = _maybe_liveness(
+        img, liveness=liveness, settings=settings, checker=checker
+    )
+    vector = pipeline.embed_bgr(img)
     face_id = str(uuid.uuid4())
     store.upsert(face_id, vector)
-    return FaceIdResponse(face_id=face_id)
+    return FaceIdResponse(face_id=face_id, liveness_score=live_score)
 
 
 @router.get("/v1/faces/groups", response_model=GroupsResponse)
@@ -85,20 +101,27 @@ def list_face_groups(
 @router.post("/v1/faces/search", response_model=SearchResponse)
 async def search_faces(
     image: UploadFile = File(...),
+    liveness: bool = Form(False),
     limit: int | None = Query(default=None),
     min_score: float | None = Query(default=None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
+    checker=Depends(liveness_dep),
 ) -> SearchResponse:
     effective_limit = settings.face_search_default_limit if limit is None else limit
     effective_limit = max(1, min(effective_limit, settings.face_search_max_limit))
     threshold = settings.face_search_min_score if min_score is None else min_score
-    vector = await _embed_upload(image, settings, pipeline)
+    img = await _decode_upload(image, settings)
+    live_score = _maybe_liveness(
+        img, liveness=liveness, settings=settings, checker=checker
+    )
+    vector = pipeline.embed_bgr(img)
     hits = store.search(vector, limit=effective_limit, min_score=threshold)
     return SearchResponse(
         results=[SearchHit(face_id=fid, score=score) for fid, score in hits],
         threshold=threshold,
+        liveness_score=live_score,
     )
 
 
@@ -106,15 +129,21 @@ async def search_faces(
 async def update_face(
     face_id: str,
     image: UploadFile = File(...),
+    liveness: bool = Form(False),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
+    checker=Depends(liveness_dep),
 ) -> UpdateResponse:
     if store.get(face_id) is None:
         raise FaceNotFoundError(f"face {face_id} not found")
-    vector = await _embed_upload(image, settings, pipeline)
+    img = await _decode_upload(image, settings)
+    live_score = _maybe_liveness(
+        img, liveness=liveness, settings=settings, checker=checker
+    )
+    vector = pipeline.embed_bgr(img)
     store.upsert(face_id, vector)
-    return UpdateResponse(face_id=face_id, updated=True)
+    return UpdateResponse(face_id=face_id, updated=True, liveness_score=live_score)
 
 
 @router.delete("/v1/faces/{face_id}", response_model=DeleteResponse)
@@ -128,18 +157,25 @@ def delete_face(face_id: str, store=Depends(store_dep)) -> DeleteResponse:
 async def verify_face(
     face_id: str,
     image: UploadFile = File(...),
+    liveness: bool = Form(False),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
+    checker=Depends(liveness_dep),
 ) -> VerifyResponse:
     stored = store.get(face_id)
     if stored is None:
         raise FaceNotFoundError(f"face {face_id} not found")
-    probe = await _embed_upload(image, settings, pipeline)
+    img = await _decode_upload(image, settings)
+    live_score = _maybe_liveness(
+        img, liveness=liveness, settings=settings, checker=checker
+    )
+    probe = pipeline.embed_bgr(img)
     score = cosine_similarity(stored, probe)
     return VerifyResponse(
         face_id=face_id,
         match=is_match(score, settings.face_match_threshold),
         score=score,
         threshold=settings.face_match_threshold,
+        liveness_score=live_score,
     )

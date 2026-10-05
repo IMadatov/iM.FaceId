@@ -14,5 +14,9 @@ class FaceNotFoundError(Exception):
     """Unknown face_id."""
 
 
+class LivenessFailedError(Exception):
+    """Image failed anti-spoof / liveness check."""
+
+
 class DependencyUnavailableError(Exception):
     """Model or Qdrant unavailable."""

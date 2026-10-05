@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     face_groups_min_size: int = 2
     face_groups_max_faces: int = 5000
     model_dir: str = "./models"
+    liveness_model_path: str = "./models/liveness/minifasnet_v2.onnx"
+    liveness_threshold: float = 0.50
+    liveness_crop_scale: float = 2.7
     max_image_side: int = 640
     max_upload_bytes: int = 5_000_000
     embedding_dim: int = 512

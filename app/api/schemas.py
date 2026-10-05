@@ -6,10 +6,12 @@ class HealthResponse(BaseModel):
 
 class FaceIdResponse(BaseModel):
     face_id: str
+    liveness_score: float | None = None
 
 class UpdateResponse(BaseModel):
     face_id: str
     updated: bool = True
+    liveness_score: float | None = None
 
 class DeleteResponse(BaseModel):
     face_id: str
@@ -20,6 +22,7 @@ class VerifyResponse(BaseModel):
     match: bool
     score: float
     threshold: float
+    liveness_score: float | None = None
 
 class SearchHit(BaseModel):
     face_id: str
@@ -28,6 +31,7 @@ class SearchHit(BaseModel):
 class SearchResponse(BaseModel):
     results: list[SearchHit]
     threshold: float
+    liveness_score: float | None = None
 
 
 class FaceGroup(BaseModel):
