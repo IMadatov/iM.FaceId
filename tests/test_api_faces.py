@@ -95,7 +95,20 @@ def test_multiple_faces_422():
     assert r.status_code == 422
 
 def test_search_limit_clamped_to_max():
-    c = _client()
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    store = MemoryFaceStore()
+    received: dict[str, int | float] = {}
+    original_search = store.search
+
+    def spy_search(vector, *, limit, min_score):
+        received["limit"] = limit
+        received["min_score"] = min_score
+        return original_search(vector, limit=limit, min_score=min_score)
+
+    store.search = spy_search  # type: ignore[method-assign]
+    app.state.store = store
+    c = TestClient(app)
     c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
     r = c.post(
         "/v1/faces/search",
@@ -103,7 +116,7 @@ def test_search_limit_clamped_to_max():
         params={"limit": 999},
     )
     assert r.status_code == 200
-    assert len(r.json()["results"]) <= 20
+    assert received["limit"] == 20
 
 def test_verify_503_when_store_raises_dependency():
     from app.errors import DependencyUnavailableError

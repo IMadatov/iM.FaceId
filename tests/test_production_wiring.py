@@ -19,7 +19,7 @@ def test_production_attaches_pipeline_and_store(monkeypatch):
     sentinel_pipe, sentinel_store = object(), object()
     monkeypatch.setattr(
         "app.pipeline.onnx_insightface.InsightFacePipeline",
-        lambda model_dir: sentinel_pipe,
+        lambda model_dir, **kwargs: sentinel_pipe,
     )
     monkeypatch.setattr(
         "app.store.qdrant.QdrantFaceStore.from_settings",

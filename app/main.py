@@ -39,7 +39,9 @@ async def _production_lifespan(app: FastAPI):
 
     settings = get_settings()
     try:
-        app.state.pipeline = InsightFacePipeline(settings.model_dir)
+        app.state.pipeline = InsightFacePipeline(
+            settings.model_dir, embedding_dim=settings.embedding_dim
+        )
     except Exception as exc:
         logger.error(
             "Failed to load InsightFace models from %r (run scripts/download_models.py): %s",

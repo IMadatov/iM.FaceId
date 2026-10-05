@@ -69,7 +69,7 @@ You can place these in a `.env` file in the project root (see `app/config.py`).
 
 - **Internal network only** — do not expose this service to the public internet without auth (API key, mTLS, etc.).
 - **No auth in MVP** — callers are trusted on the internal network.
-- Uploaded images are processed in memory and are not persisted to disk in the hot path; only embeddings live in Qdrant.
+- Uploaded images are not durably stored by the service; only embeddings live in Qdrant. Note that Starlette may spool large multipart uploads (over ~1 MB) to temporary files, which are deleted when the request ends.
 
 ## Tests
 

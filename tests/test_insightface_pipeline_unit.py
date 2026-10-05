@@ -42,6 +42,30 @@ def test_embed_missing_embedding_attr_raises():
         _pipeline([SimpleNamespace()]).embed_bgr(IMG)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [np.zeros(0), np.ones(128), np.ones((2, 512))],
+    ids=["empty", "wrong_dim", "2d"],
+)
+def test_embed_wrong_shape_raises(bad):
+    with pytest.raises(FaceDetectionError, match="shape"):
+        _pipeline([SimpleNamespace(normed_embedding=bad)]).embed_bgr(IMG)
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf])
+def test_embed_non_finite_raises(value):
+    emb = np.ones(512)
+    emb[3] = value
+    with pytest.raises(FaceDetectionError, match="non-finite"):
+        _pipeline([SimpleNamespace(normed_embedding=emb)]).embed_bgr(IMG)
+
+
+def test_embed_respects_configured_dim():
+    pipe = _pipeline([SimpleNamespace(normed_embedding=np.ones(128))])
+    pipe._dim = 128
+    assert pipe.embed_bgr(IMG).shape == (128,)
+
+
 def test_embed_no_face_raises():
     with pytest.raises(FaceDetectionError, match="no face"):
         _pipeline([]).embed_bgr(IMG)

@@ -4,9 +4,14 @@ from app.errors import FaceDetectionError
 
 
 class InsightFacePipeline:
-    def __init__(self, model_dir: str, model_name: str = "buffalo_sc") -> None:
+    _dim: int = 512
+
+    def __init__(
+        self, model_dir: str, model_name: str = "buffalo_sc", embedding_dim: int = 512
+    ) -> None:
         from insightface.app import FaceAnalysis
 
+        self._dim = embedding_dim
         self._app = FaceAnalysis(
             name=model_name,
             root=model_dir,
@@ -27,4 +32,9 @@ class InsightFacePipeline:
         embedding = getattr(faces[0], "normed_embedding", None)
         if embedding is None:
             raise FaceDetectionError("face embedding unavailable")
-        return np.asarray(embedding, dtype=np.float32)
+        vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        if vec.shape != (self._dim,):
+            raise FaceDetectionError(f"unexpected embedding shape {vec.shape}")
+        if not np.all(np.isfinite(vec)):
+            raise FaceDetectionError("embedding contains non-finite values")
+        return vec
