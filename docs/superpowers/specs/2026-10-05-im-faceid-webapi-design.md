@@ -9,9 +9,10 @@
 Build an internal FaceID microservice that replaces external MyId calls for student attendance verification. MVP supports:
 
 1. **Enroll** — image → embedding → generated `face_id` stored in a vector DB  
-2. **Update** — replace embedding for an existing `face_id`  
-3. **Verify** — `face_id` + image → 1:1 cosine match  
-4. **Search** — image → top-K similar faces from the DB (detect one person enrolled under multiple IDs / proxy attendance fraud)
+2. **Update** — replace embedding (reference image) for an existing `face_id`  
+3. **Delete** — remove a `face_id` and its vector from Qdrant  
+4. **Verify** — `face_id` + image → 1:1 cosine match  
+5. **Search** — image → top-K similar faces from the DB (detect one person enrolled under multiple IDs / proxy attendance fraud)
 
 **Why vector DB:** Later (and in MVP via search) we must find look-alike faces across the corpus, not only compare against one known ID.
 
@@ -21,7 +22,7 @@ Build an internal FaceID microservice that replaces external MyId calls for stud
 
 | Goal | Success |
 |------|---------|
-| Independent of MyId for face match | Enroll + update + verify on local CPU + Qdrant |
+| Independent of MyId for face match | Enroll + update + delete + verify on local CPU + Qdrant |
 | Duplicate / look-alike discovery | `POST /v1/faces/search` returns top-K similar `face_id`s with scores |
 | Fast enough for classroom verify | Target ~60–120 ms per verify (best-effort in MVP) |
 | Easy manual test | OpenAPI Swagger UI at `/docs` with Try it out |
@@ -63,6 +64,16 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
   { "face_id": "<uuid>", "updated": true }
   ```
 - **Errors:** `404` if missing; same image errors as enroll.
+
+### `DELETE /v1/faces/{face_id}`
+
+- **Request:** path `face_id` only.
+- **Behavior:** Delete the Qdrant point for that id (vector + payload). Idempotent preference: if already missing, return `404` (explicit) so clients know the id was not present.
+- **Response:** `200 OK`
+  ```json
+  { "face_id": "<uuid>", "deleted": true }
+  ```
+- **Errors:** `404` if `face_id` not found; `503` if Qdrant unavailable.
 
 ### `POST /v1/faces/{face_id}/verify`
 
@@ -133,7 +144,8 @@ Latency targets (guidance): detect 30–60 ms, embed 20–40 ms, 1:1 compare <1 
 - **Vector:** 512-d float32
 - **Payload (optional MVP):** `created_at` / `updated_at` timestamps
 - Update = overwrite vector for the same point id
-- No image persistence on disk in the hot path
+- Delete = remove point by id
+- No image persistence on disk in the hot path (only vectors in Qdrant)
 - Local: Qdrant via `docker compose` with persistent volume
 
 ## 7. Configuration (environment)
@@ -189,13 +201,14 @@ Model assets: SCRFD + `buffalo_sc` ONNX, fetched via a documented script (not co
 7. **Search** with a live/same-person photo → expect both IDs with high scores (fraud signal)
 8. **Update** one id with a newer photo → same `face_id`
 9. **Verify** `face_id_1` + probe → `match` / `score`
+10. **Delete** a test `face_id` → confirm verify/search no longer returns it (`404` / absent from results)
 
 ## 11. Testing methodology
 
 | Layer | What |
 |-------|------|
 | Unit | Cosine/threshold; Qdrant store mocked |
-| API | TestClient: enroll/update/verify/search status codes; update/verify `404` |
+| API | TestClient: enroll/update/delete/verify/search status codes; update/delete/verify `404` |
 | Smoke | Two enrollments of same face → search returns both above min_score; different person below or ranked lower |
 | Manual | Swagger Try it out as primary MVP check |
 
@@ -212,7 +225,7 @@ Model assets: SCRFD + `buffalo_sc` ONNX, fetched via a documented script (not co
 - Liveness / Silent-Face-Anti-Spoofing
 - Queue/workers for high concurrency
 - Parallel MyId vs iM.FaceId comparison and cutover metrics
-- `DELETE /v1/faces/{face_id}`, listing, bulk enrollment of 200k students
+- Listing endpoints, bulk enrollment of 200k students
 - Integration into existing attendance/finance backend
 
 ## 14. Migration note (future)
