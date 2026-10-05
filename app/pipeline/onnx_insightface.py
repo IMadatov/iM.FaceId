@@ -24,4 +24,7 @@ class InsightFacePipeline:
             raise FaceDetectionError("no face detected")
         if len(faces) > 1:
             raise FaceDetectionError("multiple faces detected")
-        return np.asarray(faces[0].normed_embedding, dtype=np.float32)
+        embedding = getattr(faces[0], "normed_embedding", None)
+        if embedding is None:
+            raise FaceDetectionError("face embedding unavailable")
+        return np.asarray(embedding, dtype=np.float32)
