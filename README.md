@@ -44,10 +44,11 @@ Use **Try it out** on each endpoint in order:
 1. **Enroll** — `POST /v1/faces` with a clear single-face photo → save the returned `face_id`.
 2. **Update** — `PUT /v1/faces/{face_id}` with a newer photo of the same person → same `face_id`, `"updated": true`.
 3. **Search** — `POST /v1/faces/search` with a probe image → top-K similar `face_id`s and scores (useful for duplicate-enrollment checks).
-4. **Verify** — `POST /v1/faces/{face_id}/verify` with a probe image → `match` and `score` vs threshold.
-5. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`; verify/search should no longer find that id (`404` or absent from results).
+4. **Groups** — `GET /v1/faces/groups` → on-demand clusters of similar `face_id`s (cosine ≥ threshold, connected components; singletons omitted).
+5. **Verify** — `POST /v1/faces/{face_id}/verify` with a probe image → `match` and `score` vs threshold.
+6. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`; verify/search should no longer find that id (`404` or absent from results).
 
-Optional: enroll a second photo of the same person, then search — both ids should score high (fraud signal).
+Optional: enroll a second photo of the same person, then **Groups** or **Search** — both ids should appear together (fraud signal).
 
 ## Environment variables
 
@@ -59,6 +60,8 @@ Optional: enroll a second photo of the same person, then search — both ids sho
 | `FACE_SEARCH_MIN_SCORE` | Default min score for search | `0.40` |
 | `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |
 | `FACE_SEARCH_MAX_LIMIT` | Maximum search limit | `20` |
+| `FACE_GROUPS_MIN_SIZE` | Default minimum group size | `2` |
+| `FACE_GROUPS_MAX_FACES` | Max faces allowed for on-demand grouping | `5000` |
 | `MODEL_DIR` | ONNX / InsightFace weights directory | `./models` |
 | `MAX_IMAGE_SIDE` | Max image side after resize | `640` |
 | `MAX_UPLOAD_BYTES` | Upload size limit (bytes) | `5000000` |

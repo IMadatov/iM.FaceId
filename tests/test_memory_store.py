@@ -28,3 +28,14 @@ def test_search_returns_top_by_score():
     store.upsert("far", far)
     hits = store.search(base, limit=5, min_score=0.0)
     assert hits[0][0] == "near"
+
+
+def test_list_all_returns_copies():
+    store = MemoryFaceStore()
+    v = np.ones(512, dtype=np.float32)
+    store.upsert("id-1", v)
+    items = store.list_all()
+    assert len(items) == 1
+    assert items[0][0] == "id-1"
+    items[0][1][0] = 0.0
+    assert store.get("id-1")[0] == pytest.approx(1.0)

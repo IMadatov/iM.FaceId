@@ -28,3 +28,13 @@ class SearchHit(BaseModel):
 class SearchResponse(BaseModel):
     results: list[SearchHit]
     threshold: float
+
+
+class FaceGroup(BaseModel):
+    face_ids: list[str]
+    size: int
+
+
+class GroupsResponse(BaseModel):
+    threshold: float
+    groups: list[FaceGroup]

@@ -133,3 +133,56 @@ def test_verify_503_when_store_raises_dependency():
         files={"image": ("a.png", _img_bytes(), "image/png")},
     )
     assert r.status_code == 503
+
+
+def test_groups_clusters_similar_enrollments():
+    c = _client()
+    r1 = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
+    r2 = c.post("/v1/faces", files={"image": ("b.png", _img_bytes(120), "image/png")})
+    r3 = c.post("/v1/faces", files={"image": ("c.png", _img_bytes(200), "image/png")})
+    assert r1.status_code == r2.status_code == r3.status_code == 201
+    id_a, id_b, id_c = r1.json()["face_id"], r2.json()["face_id"], r3.json()["face_id"]
+
+    r = c.get("/v1/faces/groups", params={"min_score": 0.99})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["threshold"] == 0.99
+    # identical fake embeddings for same mean image → one pair group; distant singleton omitted
+    assert len(body["groups"]) == 1
+    assert set(body["groups"][0]["face_ids"]) == {id_a, id_b}
+    assert body["groups"][0]["size"] == 2
+    assert id_c not in body["groups"][0]["face_ids"]
+
+
+def test_groups_rejects_min_size_below_two():
+    c = _client()
+    r = c.get("/v1/faces/groups", params={"min_size": 1})
+    assert r.status_code == 400
+
+
+def test_groups_rejects_when_over_max_faces():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    store = MemoryFaceStore()
+    store.list_all = lambda: [("x", np.ones(512, dtype=np.float32))] * 3  # type: ignore
+    app.state.store = store
+    # override settings via env is heavy; monkeypatch settings on dependency by
+    # replacing get path — use a tiny max via wrapping list_face_groups config:
+    from app.config import Settings
+
+    original = Settings.model_fields["face_groups_max_faces"].default
+    try:
+        # Build client that uses settings with max 2
+        class TinySettings(Settings):
+            face_groups_max_faces: int = 2
+
+        from app import deps
+
+        app.dependency_overrides[deps.settings_dep] = lambda: TinySettings()
+        c = TestClient(app)
+        r = c.get("/v1/faces/groups")
+        assert r.status_code == 400
+        assert "too many faces" in r.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+        _ = original

@@ -28,5 +28,8 @@ class MemoryFaceStore:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:limit]
 
+    def list_all(self) -> list[tuple[str, np.ndarray]]:
+        return [(fid, vec.copy()) for fid, vec in self._data.items()]
+
     def ping(self) -> bool:
         return True

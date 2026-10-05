@@ -119,6 +119,29 @@ class QdrantFaceStore:
         )
         return [(str(p.id), float(p.score)) for p in response.points]
 
+    def list_all(self) -> list[tuple[str, np.ndarray]]:
+        """Scroll all points with vectors from the collection."""
+        out: list[tuple[str, np.ndarray]] = []
+        next_offset = None
+
+        def _scroll(offset):
+            return self._client.scroll(
+                collection_name=self._collection,
+                limit=256,
+                offset=offset,
+                with_vectors=True,
+                with_payload=False,
+            )
+
+        while True:
+            offset = next_offset
+            records, next_offset = self._call(lambda o=offset: _scroll(o))
+            for rec in records:
+                out.append((str(rec.id), np.asarray(rec.vector, dtype=np.float32)))
+            if next_offset is None:
+                break
+        return out
+
     def ping(self) -> bool:
         try:
             self._client.get_collections()

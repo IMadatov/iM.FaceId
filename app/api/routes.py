@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.api.schemas import (
     DeleteResponse,
+    FaceGroup,
     FaceIdResponse,
+    GroupsResponse,
     HealthResponse,
     SearchHit,
     SearchResponse,
@@ -16,6 +18,7 @@ from app.deps import pipeline_dep, settings_dep, store_dep
 from app.errors import FaceNotFoundError
 from app.imaging import decode_and_resize
 from app.matching.cosine import cosine_similarity, is_match
+from app.matching.grouping import group_similar_faces
 
 router = APIRouter()
 
@@ -50,6 +53,33 @@ async def enroll_face(
     face_id = str(uuid.uuid4())
     store.upsert(face_id, vector)
     return FaceIdResponse(face_id=face_id)
+
+
+@router.get("/v1/faces/groups", response_model=GroupsResponse)
+def list_face_groups(
+    min_score: float | None = Query(default=None),
+    min_size: int | None = Query(default=None),
+    settings: Settings = Depends(settings_dep),
+    store=Depends(store_dep),
+) -> GroupsResponse:
+    threshold = settings.face_search_min_score if min_score is None else min_score
+    size = settings.face_groups_min_size if min_size is None else min_size
+    if size < 2:
+        raise HTTPException(status_code=400, detail="min_size must be >= 2")
+    items = store.list_all()
+    if len(items) > settings.face_groups_max_faces:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"too many faces for on-demand grouping "
+                f"({len(items)} > {settings.face_groups_max_faces})"
+            ),
+        )
+    groups = group_similar_faces(items, min_score=threshold, min_size=size)
+    return GroupsResponse(
+        threshold=threshold,
+        groups=[FaceGroup(face_ids=g, size=len(g)) for g in groups],
+    )
 
 
 @router.post("/v1/faces/search", response_model=SearchResponse)

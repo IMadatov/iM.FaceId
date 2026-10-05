@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     face_search_min_score: float = 0.40
     face_search_default_limit: int = 5
     face_search_max_limit: int = 20
+    face_groups_min_size: int = 2
+    face_groups_max_faces: int = 5000
     model_dir: str = "./models"
     max_image_side: int = 640
     max_upload_bytes: int = 5_000_000

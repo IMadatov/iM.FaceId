@@ -149,3 +149,17 @@ def test_ping_true_and_false():
     assert store.ping() is True
     client.get_collections.side_effect = ConnectionError("down")
     assert store.ping() is False
+
+
+def test_list_all_scrolls_points():
+    store, client = make_store()
+    rec = MagicMock()
+    rec.id = FID
+    rec.vector = np.ones(512, dtype=np.float32).tolist()
+    client.scroll.return_value = ([rec], None)
+    items = store.list_all()
+    assert len(items) == 1
+    assert items[0][0] == FID
+    assert items[0][1].shape == (512,)
+    client.scroll.assert_called_once()
+    assert client.scroll.call_args.kwargs["with_vectors"] is True
