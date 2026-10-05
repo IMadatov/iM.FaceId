@@ -85,7 +85,7 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
 - Comparison: **cosine similarity** only (1:1 against the selected `face_id`).
 - Client should downscale toward ~640×640 before upload; server also enforces `MAX_IMAGE_SIDE`.
 
-Latency targets (guidance, not hard SLOs in MVP): detect 30–60 ms, embed 20–40 ms, compare &lt;1 ms, total ~60–120 ms.
+Latency targets (guidance, not hard SLOs in MVP): detect 30–60 ms, embed 20–40 ms, compare <1 ms, total ~60–120 ms.
 
 ## 6. Storage
 
@@ -126,7 +126,7 @@ iM.FaceId/
 
 - `fastapi`, `uvicorn[standard]`, `python-multipart`
 - `onnxruntime`, `opencv-python-headless`, `numpy`
-- `redis` (async or sync client — choose one consistently)
+- `redis` (sync client for MVP; FastAPI runs inference in a threadpool if needed)
 - `pydantic-settings`
 - Test: `pytest`, `httpx`
 
