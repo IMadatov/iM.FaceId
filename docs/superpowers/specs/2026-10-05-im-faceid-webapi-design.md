@@ -1,23 +1,31 @@
 # iM.FaceId — On-Premise CPU FaceID Web API (Design)
 
 **Date:** 2026-10-05  
-**Status:** Approved (conversational design)  
+**Status:** Approved (conversational design; revised for Qdrant + search)  
 **Project:** iM.FaceId
 
 ## 1. Intent
 
-Build an internal FaceID microservice that replaces external MyId calls for student attendance verification. MVP is enroll, update, and verify: store a face embedding under a generated ID, replace that embedding with a new image when needed, then compare a probe image against that ID (1:1).
+Build an internal FaceID microservice that replaces external MyId calls for student attendance verification. MVP supports:
 
-**Out of scope for MVP:** teacher mobile app changes, financial/attendance business logic, liveness/anti-spoofing, request queue workers, MyId parallel comparison, 1:N search.
+1. **Enroll** — image → embedding → generated `face_id` stored in a vector DB  
+2. **Update** — replace embedding for an existing `face_id`  
+3. **Verify** — `face_id` + image → 1:1 cosine match  
+4. **Search** — image → top-K similar faces from the DB (detect one person enrolled under multiple IDs / proxy attendance fraud)
+
+**Why vector DB:** Later (and in MVP via search) we must find look-alike faces across the corpus, not only compare against one known ID.
+
+**Out of scope for MVP:** teacher mobile app changes, financial/attendance business logic, liveness/anti-spoofing, request queue workers, MyId parallel comparison, automatic enroll blocking on duplicates (warning via search only).
 
 ## 2. Goals and success criteria
 
 | Goal | Success |
 |------|---------|
-| Independent of MyId for face match | Enroll + update + verify work on local CPU + Redis |
-| Fast enough for classroom use | Target ~60–120 ms per verify on mid-range CPU (best-effort in MVP) |
+| Independent of MyId for face match | Enroll + update + verify on local CPU + Qdrant |
+| Duplicate / look-alike discovery | `POST /v1/faces/search` returns top-K similar `face_id`s with scores |
+| Fast enough for classroom verify | Target ~60–120 ms per verify (best-effort in MVP) |
 | Easy manual test | OpenAPI Swagger UI at `/docs` with Try it out |
-| Durable embeddings | Vectors survive API process restart (Redis) |
+| Durable embeddings | Vectors survive API restart (Qdrant persistence) |
 
 ## 3. Architecture
 
@@ -27,11 +35,11 @@ Single FastAPI service (`im-faceid`) with layered modules:
 Client (Swagger / future backend)
     → API (routes, validation)
     → Pipeline (detect → embed via ONNX)
-    → Store (Redis: face_id → vector)
-    → Matching (cosine similarity + threshold)
+    → Store (Qdrant: point id = face_id, vector = 512-d)
+    → Matching (1:1 retrieve + cosine; 1:N ANN search)
 ```
 
-**Approach (approved):** Minimal FastAPI — inference in-process (thread/process pool as needed), embeddings in Redis. No Celery/RQ in MVP; can add later without changing the public API shape.
+**Approach (approved):** Minimal FastAPI — inference in-process; embeddings in **Qdrant** (cosine distance). No Celery/RQ in MVP. Redis is **not** used for vectors.
 
 ## 4. API
 
@@ -40,7 +48,7 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
 ### `POST /v1/faces`
 
 - **Request:** `multipart/form-data` field `image` (file).
-- **Behavior:** Validate → resize so max side ≤ `MAX_IMAGE_SIDE` → detect face → compute 512-d embedding → store under new UUID → discard image bytes.
+- **Behavior:** Validate → resize ≤ `MAX_IMAGE_SIDE` → detect → 512-d embed → upsert point in Qdrant with new UUID as point id → discard image bytes.
 - **Response:** `201 Created`
   ```json
   { "face_id": "<uuid>" }
@@ -48,18 +56,18 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
 
 ### `PUT /v1/faces/{face_id}`
 
-- **Request:** path `face_id`, `multipart/form-data` field `image` (file).
-- **Behavior:** Require existing `face_id` → same image pipeline as enroll → **overwrite** Redis vector for that ID → discard image bytes. `face_id` does not change.
+- **Request:** path `face_id`, `multipart/form-data` field `image`.
+- **Behavior:** Require existing point → same pipeline → **overwrite** vector for that point id. `face_id` unchanged.
 - **Response:** `200 OK`
   ```json
   { "face_id": "<uuid>", "updated": true }
   ```
-- **Errors:** `404` if `face_id` missing; same `400` / `422` / `503` rules as enroll for the image.
+- **Errors:** `404` if missing; same image errors as enroll.
 
 ### `POST /v1/faces/{face_id}/verify`
 
 - **Request:** path `face_id`, `multipart/form-data` field `image`.
-- **Behavior:** Load stored vector → embed probe image → cosine similarity → `match = score >= threshold`.
+- **Behavior:** Retrieve vector by `face_id` → embed probe → cosine similarity → `match = score >= FACE_MATCH_THRESHOLD`.
 - **Response:** `200 OK`
   ```json
   {
@@ -70,9 +78,28 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
   }
   ```
 
+### `POST /v1/faces/search`
+
+- **Request:** `multipart/form-data`:
+  - `image` (required)
+  - `limit` (optional query or form, default `5`, max e.g. `20`)
+  - `min_score` (optional, default = `FACE_MATCH_THRESHOLD` or a dedicated `FACE_SEARCH_MIN_SCORE`)
+- **Behavior:** Embed probe → Qdrant ANN search (cosine) → return matches at/above `min_score`, excluding nothing by default (caller may ignore self after enroll).
+- **Response:** `200 OK`
+  ```json
+  {
+    "results": [
+      { "face_id": "<uuid>", "score": 0.91 },
+      { "face_id": "<uuid>", "score": 0.88 }
+    ],
+    "threshold": 0.40
+  }
+  ```
+- **Fraud use case:** If the same physical person was enrolled twice, search on a live photo (or on one enrollment image) surfaces multiple high-scoring `face_id`s for investigation. MVP does **not** auto-reject enroll; clients call search when needed.
+
 ### `GET /health`
 
-- **Response:** `200` when models loaded and Redis ping succeeds; otherwise `503` with reason.
+- **Response:** `200` when models loaded and Qdrant is reachable; otherwise `503` with reason.
 
 ### Error responses
 
@@ -81,7 +108,7 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
 | Invalid/oversized file | `400` |
 | Unknown `face_id` | `404` |
 | No face / multiple faces | `422` |
-| Model or Redis unavailable | `503` |
+| Model or Qdrant unavailable | `503` |
 
 ## 5. Model stack (CPU)
 
@@ -91,26 +118,34 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
 | Recognition | InsightFace `buffalo_sc` (MobileFaceNet/ArcFace family) | ONNX Runtime |
 | Quantization | INT8 dynamic where practical | onnxruntime |
 
-- Embedding size: **512** floats (float32 in Redis).
-- Comparison: **cosine similarity** only (1:1 against the selected `face_id`).
-- Client should downscale toward ~640×640 before upload; server also enforces `MAX_IMAGE_SIDE`.
+- Embedding size: **512** floats (`float32`).
+- Verify: **1:1** cosine against retrieved vector.
+- Search: **1:N** ANN cosine in Qdrant.
+- Client should downscale toward ~640×640; server enforces `MAX_IMAGE_SIDE`.
 
-Latency targets (guidance, not hard SLOs in MVP): detect 30–60 ms, embed 20–40 ms, compare <1 ms, total ~60–120 ms.
+Latency targets (guidance): detect 30–60 ms, embed 20–40 ms, 1:1 compare <1 ms, ANN search typically low tens of ms at ~200k (hardware-dependent). Verify total ~60–120 ms.
 
-## 6. Storage
+## 6. Storage (Qdrant)
 
-- **Redis** key: `face:{face_id}` → binary float32[512] (or equivalent compact encoding).
-- Optional metadata hash later (`created_at`); not required for MVP.
-- Update overwrites the same key in place (no new UUID).
-- No image persistence on disk in the enroll/update/verify hot path.
+- **Collection:** e.g. `faces`
+- **Distance:** Cosine
+- **Point id:** `face_id` (UUID)
+- **Vector:** 512-d float32
+- **Payload (optional MVP):** `created_at` / `updated_at` timestamps
+- Update = overwrite vector for the same point id
+- No image persistence on disk in the hot path
+- Local: Qdrant via `docker compose` with persistent volume
 
 ## 7. Configuration (environment)
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `REDIS_URL` | Redis connection | `redis://localhost:6379/0` |
-| `FACE_MATCH_THRESHOLD` | Cosine match cutoff | `0.40` |
-| `MODEL_DIR` | Directory with ONNX weights | `./models` |
+| `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` |
+| `QDRANT_COLLECTION` | Collection name | `faces` |
+| `FACE_MATCH_THRESHOLD` | 1:1 verify cutoff | `0.40` |
+| `FACE_SEARCH_MIN_SCORE` | Default min score for search | `0.40` |
+| `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |
+| `MODEL_DIR` | ONNX weights directory | `./models` |
 | `MAX_IMAGE_SIDE` | Max image side after resize | `640` |
 | `MAX_UPLOAD_BYTES` | Upload size limit | e.g. `5_000_000` |
 
@@ -119,25 +154,25 @@ Latency targets (guidance, not hard SLOs in MVP): detect 30–60 ms, embed 20–
 ```
 iM.FaceId/
   app/
-    main.py           # FastAPI app, OpenAPI/Swagger
-    config.py         # pydantic-settings
-    api/routes.py     # /v1/faces, /health
-    pipeline/         # SCRFD + embedding
-    store/redis.py    # face_id ↔ vector
-    matching/         # cosine + threshold
-  models/             # ONNX files (download script; large binaries gitignored)
+    main.py              # FastAPI app, OpenAPI/Swagger
+    config.py            # pydantic-settings
+    api/routes.py        # /v1/faces, /health
+    pipeline/            # SCRFD + embedding
+    store/qdrant.py      # upsert, get, search
+    matching/            # cosine helpers / threshold
+  models/                # ONNX files (download script; gitignore large binaries)
   tests/
   docs/superpowers/specs/
   pyproject.toml / requirements.txt
   README.md
-  docker-compose.yml  # api + redis for local test
+  docker-compose.yml     # api + qdrant for local test
 ```
 
 ## 9. Dependencies (to pin at implement time)
 
 - `fastapi`, `uvicorn[standard]`, `python-multipart`
 - `onnxruntime`, `opencv-python-headless`, `numpy`
-- `redis` (sync client for MVP; FastAPI runs inference in a threadpool if needed)
+- `qdrant-client`
 - `pydantic-settings`
 - Test: `pytest`, `httpx`
 
@@ -145,32 +180,36 @@ Model assets: SCRFD + `buffalo_sc` ONNX, fetched via a documented script (not co
 
 ## 10. Local run and Swagger test
 
-1. Start Redis (`docker compose up redis` or equivalent).
+1. Start Qdrant (`docker compose up qdrant` or full stack).
 2. Place/download models into `MODEL_DIR`.
 3. `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 4. Open `http://127.0.0.1:8000/docs`
-5. Call **enroll** with image A → copy `face_id`
-6. Optionally call **update** (`PUT /v1/faces/{face_id}`) with a newer reference photo → same `face_id`
-7. Call **verify** with same `face_id` and image B (same/different person) → inspect `match` / `score`
+5. **Enroll** image A → `face_id_1`
+6. **Enroll** same person image A′ (optional) → `face_id_2`
+7. **Search** with a live/same-person photo → expect both IDs with high scores (fraud signal)
+8. **Update** one id with a newer photo → same `face_id`
+9. **Verify** `face_id_1` + probe → `match` / `score`
 
 ## 11. Testing methodology
 
 | Layer | What |
 |-------|------|
-| Unit | Cosine similarity, threshold boundary, vector serialize/deserialize |
-| API | httpx + TestClient; mock pipeline for enroll/update/verify status codes (incl. update `404`) |
-| Smoke | Real (or fixture) ONNX if available: one same-person pair, one different-person pair |
-| Manual | Swagger Try it out as primary developer check for MVP |
+| Unit | Cosine/threshold; Qdrant store mocked |
+| API | TestClient: enroll/update/verify/search status codes; update/verify `404` |
+| Smoke | Two enrollments of same face → search returns both above min_score; different person below or ranked lower |
+| Manual | Swagger Try it out as primary MVP check |
 
 ## 12. Security (MVP)
 
 - Intended for **internal** network use only.
 - No auth in MVP; add API key or mTLS before internet exposure.
 - Do not write uploaded images to durable storage in the hot path.
+- Search results are sensitive (can link identities); keep API internal.
 
 ## 13. Deferred (post-MVP)
 
-- Liveness / Silent-Face-Anti-Spoofing (separate layer; must not dominate match latency)
+- Auto-reject or `409` on enroll when search finds a near-duplicate (option C)
+- Liveness / Silent-Face-Anti-Spoofing
 - Queue/workers for high concurrency
 - Parallel MyId vs iM.FaceId comparison and cutover metrics
 - `DELETE /v1/faces/{face_id}`, listing, bulk enrollment of 200k students
@@ -178,4 +217,4 @@ Model assets: SCRFD + `buffalo_sc` ONNX, fetched via a documented script (not co
 
 ## 14. Migration note (future)
 
-When integrating with the 200k-student system: keep MyId in parallel for a period; compare agree/disagree and false-reject rates; cut over only after thresholds are validated. Not part of this MVP delivery.
+When integrating with the 200k-student system: keep MyId in parallel for a period; compare agree/disagree and false-reject rates; use search to audit duplicate enrollments; cut over only after thresholds are validated. Not part of this MVP delivery.
