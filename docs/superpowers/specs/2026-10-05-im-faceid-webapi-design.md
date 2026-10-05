@@ -6,7 +6,7 @@
 
 ## 1. Intent
 
-Build an internal FaceID microservice that replaces external MyId calls for student attendance verification. MVP is enroll-then-verify only: store a face embedding under a generated ID, then compare a new image against that ID (1:1).
+Build an internal FaceID microservice that replaces external MyId calls for student attendance verification. MVP is enroll, update, and verify: store a face embedding under a generated ID, replace that embedding with a new image when needed, then compare a probe image against that ID (1:1).
 
 **Out of scope for MVP:** teacher mobile app changes, financial/attendance business logic, liveness/anti-spoofing, request queue workers, MyId parallel comparison, 1:N search.
 
@@ -14,7 +14,7 @@ Build an internal FaceID microservice that replaces external MyId calls for stud
 
 | Goal | Success |
 |------|---------|
-| Independent of MyId for face match | Enroll + verify work on local CPU + Redis |
+| Independent of MyId for face match | Enroll + update + verify work on local CPU + Redis |
 | Fast enough for classroom use | Target ~60–120 ms per verify on mid-range CPU (best-effort in MVP) |
 | Easy manual test | OpenAPI Swagger UI at `/docs` with Try it out |
 | Durable embeddings | Vectors survive API process restart (Redis) |
@@ -45,6 +45,16 @@ Base path: `/v1`. Interactive docs: `/docs` (Swagger), `/redoc`.
   ```json
   { "face_id": "<uuid>" }
   ```
+
+### `PUT /v1/faces/{face_id}`
+
+- **Request:** path `face_id`, `multipart/form-data` field `image` (file).
+- **Behavior:** Require existing `face_id` → same image pipeline as enroll → **overwrite** Redis vector for that ID → discard image bytes. `face_id` does not change.
+- **Response:** `200 OK`
+  ```json
+  { "face_id": "<uuid>", "updated": true }
+  ```
+- **Errors:** `404` if `face_id` missing; same `400` / `422` / `503` rules as enroll for the image.
 
 ### `POST /v1/faces/{face_id}/verify`
 
@@ -91,7 +101,8 @@ Latency targets (guidance, not hard SLOs in MVP): detect 30–60 ms, embed 20–
 
 - **Redis** key: `face:{face_id}` → binary float32[512] (or equivalent compact encoding).
 - Optional metadata hash later (`created_at`); not required for MVP.
-- No image persistence on disk in the verify/enroll hot path.
+- Update overwrites the same key in place (no new UUID).
+- No image persistence on disk in the enroll/update/verify hot path.
 
 ## 7. Configuration (environment)
 
@@ -139,14 +150,15 @@ Model assets: SCRFD + `buffalo_sc` ONNX, fetched via a documented script (not co
 3. `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 4. Open `http://127.0.0.1:8000/docs`
 5. Call **enroll** with image A → copy `face_id`
-6. Call **verify** with same `face_id` and image B (same/different person) → inspect `match` / `score`
+6. Optionally call **update** (`PUT /v1/faces/{face_id}`) with a newer reference photo → same `face_id`
+7. Call **verify** with same `face_id` and image B (same/different person) → inspect `match` / `score`
 
 ## 11. Testing methodology
 
 | Layer | What |
 |-------|------|
 | Unit | Cosine similarity, threshold boundary, vector serialize/deserialize |
-| API | httpx + TestClient; mock pipeline for route/status-code tests |
+| API | httpx + TestClient; mock pipeline for enroll/update/verify status codes (incl. update `404`) |
 | Smoke | Real (or fixture) ONNX if available: one same-person pair, one different-person pair |
 | Manual | Swagger Try it out as primary developer check for MVP |
 
