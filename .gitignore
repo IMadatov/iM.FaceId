@@ -1,1 +1,10 @@
 .worktrees/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+models/
+*.onnx
+.idea/
+.vscode/
