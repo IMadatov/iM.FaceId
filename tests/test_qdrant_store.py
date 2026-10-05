@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from qdrant_client.http.exceptions import ResponseHandlingException
 
 from app.errors import DependencyUnavailableError
 from app.store.qdrant import QdrantFaceStore
@@ -105,6 +106,42 @@ def test_search_error_wrapped():
     client.query_points.side_effect = ConnectionError("down")
     with pytest.raises(DependencyUnavailableError):
         store.search(np.ones(512, dtype=np.float32), limit=1, min_score=0.0)
+
+
+@pytest.mark.parametrize("bad_id", ["not-a-uuid", "", "123"])
+def test_get_invalid_id_returns_none_without_calling_qdrant(bad_id):
+    store, client = make_store()
+    assert store.get(bad_id) is None
+    client.retrieve.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_id", ["not-a-uuid", "", "123"])
+def test_delete_invalid_id_returns_false_without_calling_qdrant(bad_id):
+    store, client = make_store()
+    assert store.delete(bad_id) is False
+    client.retrieve.assert_not_called()
+    client.delete.assert_not_called()
+
+
+def test_upsert_invalid_id_raises_value_error():
+    store, client = make_store()
+    with pytest.raises(ValueError):
+        store.upsert("not-a-uuid", np.ones(512, dtype=np.float32))
+    client.upsert.assert_not_called()
+
+
+def test_non_connection_errors_not_wrapped():
+    store, client = make_store()
+    client.retrieve.side_effect = ValueError("bad request")
+    with pytest.raises(ValueError):
+        store.get(FID)
+
+
+def test_qdrant_api_errors_wrapped():
+    store, client = make_store()
+    client.retrieve.side_effect = ResponseHandlingException(Exception("conn"))
+    with pytest.raises(DependencyUnavailableError):
+        store.get(FID)
 
 
 def test_ping_true_and_false():

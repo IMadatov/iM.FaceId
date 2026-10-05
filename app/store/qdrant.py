@@ -1,14 +1,32 @@
+import uuid
 from collections.abc import Callable
 from typing import TypeVar
 
 import numpy as np
 from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from app.config import Settings
 from app.errors import DependencyUnavailableError
 
 T = TypeVar("T")
+
+_UNAVAILABLE_ERRORS = (
+    ResponseHandlingException,
+    UnexpectedResponse,
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
+
+
+def _is_valid_id(face_id: str) -> bool:
+    try:
+        uuid.UUID(face_id)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 class QdrantFaceStore:
@@ -31,7 +49,7 @@ class QdrantFaceStore:
             return fn()
         except DependencyUnavailableError:
             raise
-        except Exception as exc:
+        except _UNAVAILABLE_ERRORS as exc:
             raise DependencyUnavailableError(f"Qdrant unavailable: {exc}") from exc
 
     def ensure_collection(self) -> None:
@@ -47,6 +65,8 @@ class QdrantFaceStore:
         self._call(_ensure)
 
     def upsert(self, face_id: str, vector: np.ndarray) -> None:
+        if not _is_valid_id(face_id):
+            raise ValueError(f"face_id must be a UUID: {face_id!r}")
         vec = vector.astype(np.float32, copy=False).reshape(-1).tolist()
         point = PointStruct(id=face_id, vector=vec, payload={"face_id": face_id})
         self._call(
@@ -66,12 +86,16 @@ class QdrantFaceStore:
         )
 
     def get(self, face_id: str) -> np.ndarray | None:
+        if not _is_valid_id(face_id):
+            return None
         records = self._retrieve(face_id, with_vectors=True)
         if not records:
             return None
         return np.asarray(records[0].vector, dtype=np.float32)
 
     def delete(self, face_id: str) -> bool:
+        if not _is_valid_id(face_id):
+            return False
         if not self._retrieve(face_id, with_vectors=False):
             return False
         self._call(
