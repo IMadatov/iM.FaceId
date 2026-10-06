@@ -13,13 +13,21 @@ class FakeLivenessChecker:
     def ready(self) -> bool:
         return True
 
-    def score_bgr(self, image_bgr: np.ndarray) -> float:
+    def score_bgr(
+        self, image_bgr: np.ndarray, bbox: np.ndarray | None = None
+    ) -> float:
         if self.force_spoof:
             return 0.05
         return float(self._score)
 
-    def ensure_live(self, image_bgr: np.ndarray, *, threshold: float) -> float:
-        score = self.score_bgr(image_bgr)
+    def ensure_live(
+        self,
+        image_bgr: np.ndarray,
+        *,
+        threshold: float,
+        bbox: np.ndarray | None = None,
+    ) -> float:
+        score = self.score_bgr(image_bgr, bbox=bbox)
         if score < threshold:
             raise LivenessFailedError(
                 f"liveness check failed (score={score:.4f} < {threshold:.4f})"
@@ -33,8 +41,16 @@ class UnavailableLivenessChecker:
     def ready(self) -> bool:
         return False
 
-    def score_bgr(self, image_bgr: np.ndarray) -> float:
+    def score_bgr(
+        self, image_bgr: np.ndarray, bbox: np.ndarray | None = None
+    ) -> float:
         raise RuntimeError("liveness model not available")
 
-    def ensure_live(self, image_bgr: np.ndarray, *, threshold: float) -> float:
+    def ensure_live(
+        self,
+        image_bgr: np.ndarray,
+        *,
+        threshold: float,
+        bbox: np.ndarray | None = None,
+    ) -> float:
         raise RuntimeError("liveness model not available")

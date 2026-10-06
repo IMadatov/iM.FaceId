@@ -32,7 +32,7 @@ async def _decode_upload(image: UploadFile, settings: Settings):
     )
 
 
-def _maybe_liveness(img, *, liveness: bool, settings: Settings, checker):
+def _maybe_liveness(img, *, liveness: bool, settings: Settings, checker, bbox=None):
     if not liveness:
         return None
     if not checker.ready():
@@ -40,7 +40,9 @@ def _maybe_liveness(img, *, liveness: bool, settings: Settings, checker):
             "liveness model not available "
             "(run scripts/download_liveness_model.py)"
         )
-    return checker.ensure_live(img, threshold=settings.liveness_threshold)
+    return checker.ensure_live(
+        img, threshold=settings.liveness_threshold, bbox=bbox
+    )
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -62,12 +64,16 @@ async def enroll_face(
     checker=Depends(liveness_dep),
 ) -> FaceIdResponse:
     img = await _decode_upload(image, settings)
+    detected = pipeline.detect_bgr(img)
     live_score = _maybe_liveness(
-        img, liveness=liveness, settings=settings, checker=checker
+        img,
+        liveness=liveness,
+        settings=settings,
+        checker=checker,
+        bbox=detected.bbox,
     )
-    vector = pipeline.embed_bgr(img)
     face_id = str(uuid.uuid4())
-    store.upsert(face_id, vector)
+    store.upsert(face_id, detected.embedding)
     return FaceIdResponse(face_id=face_id, liveness_score=live_score)
 
 
@@ -113,11 +119,17 @@ async def search_faces(
     effective_limit = max(1, min(effective_limit, settings.face_search_max_limit))
     threshold = settings.face_search_min_score if min_score is None else min_score
     img = await _decode_upload(image, settings)
+    detected = pipeline.detect_bgr(img)
     live_score = _maybe_liveness(
-        img, liveness=liveness, settings=settings, checker=checker
+        img,
+        liveness=liveness,
+        settings=settings,
+        checker=checker,
+        bbox=detected.bbox,
     )
-    vector = pipeline.embed_bgr(img)
-    hits = store.search(vector, limit=effective_limit, min_score=threshold)
+    hits = store.search(
+        detected.embedding, limit=effective_limit, min_score=threshold
+    )
     return SearchResponse(
         results=[SearchHit(face_id=fid, score=score) for fid, score in hits],
         threshold=threshold,
@@ -138,11 +150,15 @@ async def update_face(
     if store.get(face_id) is None:
         raise FaceNotFoundError(f"face {face_id} not found")
     img = await _decode_upload(image, settings)
+    detected = pipeline.detect_bgr(img)
     live_score = _maybe_liveness(
-        img, liveness=liveness, settings=settings, checker=checker
+        img,
+        liveness=liveness,
+        settings=settings,
+        checker=checker,
+        bbox=detected.bbox,
     )
-    vector = pipeline.embed_bgr(img)
-    store.upsert(face_id, vector)
+    store.upsert(face_id, detected.embedding)
     return UpdateResponse(face_id=face_id, updated=True, liveness_score=live_score)
 
 
@@ -167,11 +183,15 @@ async def verify_face(
     if stored is None:
         raise FaceNotFoundError(f"face {face_id} not found")
     img = await _decode_upload(image, settings)
+    detected = pipeline.detect_bgr(img)
     live_score = _maybe_liveness(
-        img, liveness=liveness, settings=settings, checker=checker
+        img,
+        liveness=liveness,
+        settings=settings,
+        checker=checker,
+        bbox=detected.bbox,
     )
-    probe = pipeline.embed_bgr(img)
-    score = cosine_similarity(stored, probe)
+    score = cosine_similarity(stored, detected.embedding)
     return VerifyResponse(
         face_id=face_id,
         match=is_match(score, settings.face_match_threshold),

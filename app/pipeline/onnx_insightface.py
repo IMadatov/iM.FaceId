@@ -1,6 +1,7 @@
 import numpy as np
 
 from app.errors import FaceDetectionError
+from app.pipeline.base import DetectedFace
 
 
 class InsightFacePipeline:
@@ -23,13 +24,14 @@ class InsightFacePipeline:
     def ready(self) -> bool:
         return self._ready
 
-    def embed_bgr(self, image_bgr: np.ndarray) -> np.ndarray:
+    def detect_bgr(self, image_bgr: np.ndarray) -> DetectedFace:
         faces = self._app.get(image_bgr)
         if len(faces) == 0:
             raise FaceDetectionError("no face detected")
         if len(faces) > 1:
             raise FaceDetectionError("multiple faces detected")
-        embedding = getattr(faces[0], "normed_embedding", None)
+        face = faces[0]
+        embedding = getattr(face, "normed_embedding", None)
         if embedding is None:
             raise FaceDetectionError("face embedding unavailable")
         vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
@@ -37,4 +39,15 @@ class InsightFacePipeline:
             raise FaceDetectionError(f"unexpected embedding shape {vec.shape}")
         if not np.all(np.isfinite(vec)):
             raise FaceDetectionError("embedding contains non-finite values")
-        return vec
+        bbox = getattr(face, "bbox", None)
+        if bbox is None:
+            raise FaceDetectionError("face bbox unavailable")
+        box = np.asarray(bbox, dtype=np.float32).reshape(-1)
+        if box.shape != (4,):
+            raise FaceDetectionError(f"unexpected bbox shape {box.shape}")
+        if not np.all(np.isfinite(box)):
+            raise FaceDetectionError("bbox contains non-finite values")
+        return DetectedFace(embedding=vec, bbox=box)
+
+    def embed_bgr(self, image_bgr: np.ndarray) -> np.ndarray:
+        return self.detect_bgr(image_bgr).embedding

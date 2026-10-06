@@ -54,7 +54,7 @@ Use **Try it out** on each endpoint in order:
 5. **Verify** — `POST /v1/faces/{face_id}/verify` with a probe image → `match` and `score` vs threshold (optional `liveness=true`).
 6. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`; verify/search should no longer find that id (`404` or absent from results).
 
-Liveness is **off by default**. When `liveness=true` and the check fails → `422`; if the ONNX model is missing → `503`.
+Liveness is **off by default**. When `liveness=true`, the service detects the face first, crops with `LIVENESS_CROP_SCALE` (Silent-Face 2.7), then runs MiniFASNet. Fail → `422`; if the ONNX model is missing → `503`.
 
 Optional: enroll a second photo of the same person, then **Groups** or **Search** — both ids should appear together (fraud signal).
 

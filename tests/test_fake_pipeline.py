@@ -39,3 +39,14 @@ def test_faces_count_multiple_raises():
 def test_ready_returns_true():
     pipe = FakeFacePipeline()
     assert pipe.ready() is True
+
+
+def test_detect_bgr_returns_bbox_covering_image():
+    pipe = FakeFacePipeline()
+    img = np.full((64, 48, 3), 120, dtype=np.uint8)
+    detected = pipe.detect_bgr(img)
+    assert detected.embedding.shape == (512,)
+    assert detected.bbox.shape == (4,)
+    x1, y1, x2, y2 = detected.bbox.tolist()
+    assert 0 <= x1 < x2 <= 48
+    assert 0 <= y1 < y2 <= 64
