@@ -105,6 +105,56 @@ class QdrantFaceStore:
         )
         return True
 
+    def clear(self) -> int:
+        def _count() -> int:
+            return int(self._client.count(collection_name=self._collection).count)
+
+        n = self._call(_count)
+
+        def _wipe() -> None:
+            if self._client.collection_exists(self._collection):
+                self._client.delete_collection(collection_name=self._collection)
+
+        self._call(_wipe)
+        self.ensure_collection()
+        return n
+
+    def count(self) -> int:
+        def _count() -> int:
+            return int(self._client.count(collection_name=self._collection).count)
+
+        return self._call(_count)
+
+    def list_ids(self, *, limit: int, offset: int) -> list[str]:
+        if limit < 1 or offset < 0:
+            return []
+        ids: list[str] = []
+        skipped = 0
+        next_offset = None
+
+        def _scroll(scroll_offset):
+            return self._client.scroll(
+                collection_name=self._collection,
+                limit=256,
+                offset=scroll_offset,
+                with_vectors=False,
+                with_payload=False,
+            )
+
+        while len(ids) < limit:
+            scroll_offset = next_offset
+            records, next_offset = self._call(lambda o=scroll_offset: _scroll(o))
+            for rec in records:
+                if skipped < offset:
+                    skipped += 1
+                    continue
+                ids.append(str(rec.id))
+                if len(ids) >= limit:
+                    break
+            if next_offset is None:
+                break
+        return ids
+
     def search(
         self, vector: np.ndarray, *, limit: int, min_score: float
     ) -> list[tuple[str, float]]:

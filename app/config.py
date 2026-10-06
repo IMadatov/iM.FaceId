@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     face_search_max_limit: int = 20
     face_groups_min_size: int = 2
     face_groups_max_faces: int = 5000
+    face_list_default_limit: int = 100
+    face_list_max_limit: int = 1000
     model_dir: str = "./models"
     liveness_model_path: str = "./models/liveness/minifasnet_v2.onnx"
     liveness_threshold: float = 0.50

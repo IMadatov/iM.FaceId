@@ -163,3 +163,31 @@ def test_list_all_scrolls_points():
     assert items[0][1].shape == (512,)
     client.scroll.assert_called_once()
     assert client.scroll.call_args.kwargs["with_vectors"] is True
+
+
+def test_clear_deletes_and_recreates_collection():
+    store, client = make_store()
+    client.count.return_value = MagicMock(count=3)
+    # wipe sees collection present; ensure_collection sees it missing after delete
+    client.collection_exists.side_effect = [True, False]
+    assert store.clear() == 3
+    client.count.assert_called_once()
+    client.delete_collection.assert_called_once_with(collection_name="faces")
+    client.create_collection.assert_called()
+
+
+def test_count_uses_qdrant_count():
+    store, client = make_store()
+    client.count.return_value = MagicMock(count=42)
+    assert store.count() == 42
+
+
+def test_list_ids_scrolls_and_pages():
+    store, client = make_store()
+    client.count.return_value = MagicMock(count=3)
+    r1, r2, r3 = MagicMock(), MagicMock(), MagicMock()
+    r1.id, r2.id, r3.id = "a", "b", "c"
+    # first scroll page returns all three then stop
+    client.scroll.return_value = ([r1, r2, r3], None)
+    assert store.list_ids(limit=2, offset=1) == ["b", "c"]
+    assert client.scroll.call_args.kwargs["with_vectors"] is False

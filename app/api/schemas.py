@@ -17,6 +17,34 @@ class DeleteResponse(BaseModel):
     face_id: str
     deleted: bool = True
 
+
+class ClearResponse(BaseModel):
+    cleared: bool = True
+    deleted_count: int
+
+
+class CountResponse(BaseModel):
+    count: int
+
+
+class FaceExistsResponse(BaseModel):
+    face_id: str
+    exists: bool = True
+
+
+class FaceListResponse(BaseModel):
+    face_ids: list[str]
+    total: int
+    limit: int
+    offset: int
+
+
+class StatsResponse(BaseModel):
+    faces_count: int
+    store_ok: bool
+    pipeline_ok: bool
+
+
 class VerifyResponse(BaseModel):
     face_id: str
     match: bool

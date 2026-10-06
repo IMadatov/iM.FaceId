@@ -3,13 +3,18 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.api.schemas import (
+    ClearResponse,
+    CountResponse,
     DeleteResponse,
+    FaceExistsResponse,
     FaceGroup,
     FaceIdResponse,
+    FaceListResponse,
     GroupsResponse,
     HealthResponse,
     SearchHit,
     SearchResponse,
+    StatsResponse,
     UpdateResponse,
     VerifyResponse,
 )
@@ -75,6 +80,46 @@ async def enroll_face(
     face_id = str(uuid.uuid4())
     store.upsert(face_id, detected.embedding)
     return FaceIdResponse(face_id=face_id, liveness_score=live_score)
+
+
+@router.delete("/v1/faces", response_model=ClearResponse)
+def clear_faces(store=Depends(store_dep)) -> ClearResponse:
+    """Remove all enrolled face embeddings (manual full wipe)."""
+    deleted_count = store.clear()
+    return ClearResponse(cleared=True, deleted_count=deleted_count)
+
+
+@router.get("/v1/faces/count", response_model=CountResponse)
+def count_faces(store=Depends(store_dep)) -> CountResponse:
+    return CountResponse(count=store.count())
+
+
+@router.get("/v1/faces", response_model=FaceListResponse)
+def list_faces(
+    limit: int | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    settings: Settings = Depends(settings_dep),
+    store=Depends(store_dep),
+) -> FaceListResponse:
+    effective = settings.face_list_default_limit if limit is None else limit
+    effective = max(1, min(effective, settings.face_list_max_limit))
+    return FaceListResponse(
+        face_ids=store.list_ids(limit=effective, offset=offset),
+        total=store.count(),
+        limit=effective,
+        offset=offset,
+    )
+
+
+@router.get("/v1/stats", response_model=StatsResponse)
+def stats(
+    pipeline=Depends(pipeline_dep), store=Depends(store_dep)
+) -> StatsResponse:
+    return StatsResponse(
+        faces_count=store.count(),
+        store_ok=store.ping(),
+        pipeline_ok=pipeline.ready(),
+    )
 
 
 @router.get("/v1/faces/groups", response_model=GroupsResponse)
@@ -160,6 +205,13 @@ async def update_face(
     )
     store.upsert(face_id, detected.embedding)
     return UpdateResponse(face_id=face_id, updated=True, liveness_score=live_score)
+
+
+@router.get("/v1/faces/{face_id}", response_model=FaceExistsResponse)
+def get_face(face_id: str, store=Depends(store_dep)) -> FaceExistsResponse:
+    if store.get(face_id) is None:
+        raise FaceNotFoundError(f"face {face_id} not found")
+    return FaceExistsResponse(face_id=face_id, exists=True)
 
 
 @router.delete("/v1/faces/{face_id}", response_model=DeleteResponse)

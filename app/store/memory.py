@@ -17,6 +17,20 @@ class MemoryFaceStore:
     def delete(self, face_id: str) -> bool:
         return self._data.pop(face_id, None) is not None
 
+    def clear(self) -> int:
+        n = len(self._data)
+        self._data.clear()
+        return n
+
+    def count(self) -> int:
+        return len(self._data)
+
+    def list_ids(self, *, limit: int, offset: int) -> list[str]:
+        if limit < 1 or offset < 0:
+            return []
+        keys = list(self._data.keys())
+        return keys[offset : offset + limit]
+
     def search(
         self, vector: np.ndarray, *, limit: int, min_score: float
     ) -> list[tuple[str, float]]:

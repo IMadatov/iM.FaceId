@@ -53,6 +53,65 @@ def test_enroll_update_verify_search_delete_flow():
     r7 = c.delete(f"/v1/faces/{face_id}")
     assert r7.status_code == 404
 
+
+def test_clear_all_faces():
+    c = _client()
+    r1 = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
+    r2 = c.post("/v1/faces", files={"image": ("b.png", _img_bytes(130), "image/png")})
+    assert r1.status_code == r2.status_code == 201
+    id_a, id_b = r1.json()["face_id"], r2.json()["face_id"]
+
+    r = c.delete("/v1/faces")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cleared"] is True
+    assert body["deleted_count"] == 2
+
+    assert c.get("/v1/faces/groups").json()["groups"] == []
+    assert c.delete(f"/v1/faces/{id_a}").status_code == 404
+    assert c.delete(f"/v1/faces/{id_b}").status_code == 404
+
+    r_empty = c.delete("/v1/faces")
+    assert r_empty.status_code == 200
+    assert r_empty.json()["deleted_count"] == 0
+
+
+def test_count_list_get_stats():
+    c = _client()
+    assert c.get("/v1/faces/count").json() == {"count": 0}
+    assert c.get("/v1/stats").json() == {
+        "faces_count": 0,
+        "store_ok": True,
+        "pipeline_ok": True,
+    }
+
+    r1 = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
+    r2 = c.post("/v1/faces", files={"image": ("b.png", _img_bytes(140), "image/png")})
+    assert r1.status_code == r2.status_code == 201
+    id_a, id_b = r1.json()["face_id"], r2.json()["face_id"]
+
+    assert c.get("/v1/faces/count").json()["count"] == 2
+    listed = c.get("/v1/faces", params={"limit": 1, "offset": 0})
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["total"] == 2
+    assert body["limit"] == 1
+    assert body["offset"] == 0
+    assert len(body["face_ids"]) == 1
+    assert body["face_ids"][0] in {id_a, id_b}
+
+    got = c.get(f"/v1/faces/{id_a}")
+    assert got.status_code == 200
+    assert got.json() == {"face_id": id_a, "exists": True}
+
+    missing = c.get("/v1/faces/00000000-0000-0000-0000-000000000000")
+    assert missing.status_code == 404
+
+    stats = c.get("/v1/stats").json()
+    assert stats["faces_count"] == 2
+    assert stats["store_ok"] is True
+    assert stats["pipeline_ok"] is True
+
 def test_verify_unknown_404():
     c = _client()
     r = c.post(

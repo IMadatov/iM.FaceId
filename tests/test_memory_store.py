@@ -39,3 +39,25 @@ def test_list_all_returns_copies():
     assert items[0][0] == "id-1"
     items[0][1][0] = 0.0
     assert store.get("id-1")[0] == pytest.approx(1.0)
+
+
+def test_clear_removes_all_and_returns_count():
+    store = MemoryFaceStore()
+    v = np.ones(512, dtype=np.float32)
+    store.upsert("a", v)
+    store.upsert("b", v)
+    assert store.clear() == 2
+    assert store.list_all() == []
+    assert store.clear() == 0
+
+
+def test_count_and_list_ids_pagination():
+    store = MemoryFaceStore()
+    v = np.ones(512, dtype=np.float32)
+    for i in range(5):
+        store.upsert(f"id-{i}", v)
+    assert store.count() == 5
+    assert store.list_ids(limit=2, offset=0) == ["id-0", "id-1"]
+    assert store.list_ids(limit=2, offset=2) == ["id-2", "id-3"]
+    assert store.list_ids(limit=10, offset=4) == ["id-4"]
+    assert store.list_ids(limit=10, offset=5) == []

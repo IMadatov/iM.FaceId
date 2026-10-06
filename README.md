@@ -53,6 +53,8 @@ Use **Try it out** on each endpoint in order:
 4. **Groups** — `GET /v1/faces/groups` → on-demand clusters of similar `face_id`s (cosine ≥ threshold, connected components; singletons omitted).
 5. **Verify** — `POST /v1/faces/{face_id}/verify` with a probe image → `match` and `score` vs threshold (optional `liveness=true`).
 6. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`; verify/search should no longer find that id (`404` or absent from results).
+7. **Clear all** — `DELETE /v1/faces` → wipes every embedding (`deleted_count`); use only from a trusted backend (no auth in MVP).
+8. **Count / list / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces?limit=&offset=`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no vectors returned).
 
 Liveness is **off by default**. When `liveness=true`, the service detects the face first, crops with `LIVENESS_CROP_SCALE` (Silent-Face 2.7), then runs MiniFASNet. Fail → `422`; if the ONNX model is missing → `503`.
 
@@ -70,6 +72,8 @@ Optional: enroll a second photo of the same person, then **Groups** or **Search*
 | `FACE_SEARCH_MAX_LIMIT` | Maximum search limit | `20` |
 | `FACE_GROUPS_MIN_SIZE` | Default minimum group size | `2` |
 | `FACE_GROUPS_MAX_FACES` | Max faces allowed for on-demand grouping | `5000` |
+| `FACE_LIST_DEFAULT_LIMIT` | Default page size for `GET /v1/faces` | `100` |
+| `FACE_LIST_MAX_LIMIT` | Max page size for face id listing | `1000` |
 | `MODEL_DIR` | ONNX / InsightFace weights directory | `./models` |
 | `LIVENESS_MODEL_PATH` | MiniFASNet-V2 ONNX path | `./models/liveness/minifasnet_v2.onnx` |
 | `LIVENESS_THRESHOLD` | Min live-class probability | `0.50` |
