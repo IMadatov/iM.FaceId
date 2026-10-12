@@ -6,6 +6,35 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 2g
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: faces
+      MODEL_DIR: /app/models
+      LIVENESS_MODEL_PATH: /app/models/liveness/minifasnet_v2.onnx
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 4g
 
 volumes:
   qdrant_data:
