@@ -17,7 +17,7 @@ docker compose up --build -d
 
 - API / Swagger: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 - Health: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
-- Qdrant HTTP is published on `6333` for local debug; treat as internal-only on a shared server
+- Qdrant HTTP/gRPC are bound to loopback only (`127.0.0.1:6333` / `6334`) for local debug; the API reaches Qdrant on the Compose network
 
 Resource defaults (edit `docker-compose.yml` to change):
 

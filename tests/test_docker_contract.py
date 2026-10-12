@@ -33,4 +33,7 @@ def test_compose_api_and_qdrant_limits_and_env():
         "LIVENESS_MODEL_PATH: /app/models/liveness/minifasnet_v2.onnx" in text
     )
     assert "condition: service_healthy" in text
+    assert "127.0.0.1:6333:6333" in text
+    assert "127.0.0.1:6334:6334" in text
+    assert '"6333:6333"' not in text and "'6333:6333'" not in text
     assert "restart: unless-stopped" in text
