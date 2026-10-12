@@ -1,0 +1,16 @@
+.git
+.venv
+.worktrees
+.pytest_cache
+__pycache__
+*.pyc
+.env
+.idea
+.vscode
+graphify-out
+tests
+docs
+models
+*.onnx
+*.md
+!requirements.txt
