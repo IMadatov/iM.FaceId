@@ -4,10 +4,37 @@ iM.FaceId is an on-premise, CPU-only FaceID microservice for internal student at
 
 ## Prerequisites
 
-- Python 3.11+
-- Docker (for Qdrant)
+- Docker and Docker Compose (API + Qdrant)
+- Optional for host-side development: Python 3.11+
 
-## Local setup
+## Deploy with Docker Compose (recommended)
+
+Build the API image (downloads InsightFace + liveness models into the image) and start the stack:
+
+```bash
+docker compose up --build -d
+```
+
+- API / Swagger: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- Health: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- Qdrant HTTP is published on `6333` for local debug; treat as internal-only on a shared server
+
+Resource defaults (edit `docker-compose.yml` to change):
+
+| Service | CPUs | Memory |
+|---------|------|--------|
+| `api` | 2.0 | 4g |
+| `qdrant` | 1.0 | 2g |
+
+Stop:
+
+```bash
+docker compose down
+```
+
+## Local setup (optional host venv)
+
+Use this only when iterating on Python code without rebuilding the image.
 
 ```bash
 python -m venv .venv
@@ -15,7 +42,7 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Start Qdrant:
+Start Qdrant only:
 
 ```bash
 docker compose up -d qdrant
@@ -35,7 +62,7 @@ python scripts/download_liveness_model.py
 
 InsightFace writes weights under `MODEL_DIR` (default `./models`). The library typically stores the pack at `<MODEL_DIR>/models/buffalo_sc` — set `MODEL_DIR` before running the script if you want a different location. Liveness defaults to `./models/liveness/minifasnet_v2.onnx`.
 
-Run the API:
+Run the API on the host:
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -64,7 +91,7 @@ Optional: enroll a second photo of the same person, then **Groups** or **Search*
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` |
+| `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` (Compose: `http://qdrant:6333`) |
 | `QDRANT_COLLECTION` | Collection name | `faces` |
 | `FACE_MATCH_THRESHOLD` | 1:1 verify cutoff | `0.40` |
 | `FACE_SEARCH_MIN_SCORE` | Default min score for search | `0.40` |
@@ -74,8 +101,8 @@ Optional: enroll a second photo of the same person, then **Groups** or **Search*
 | `FACE_GROUPS_MAX_FACES` | Max faces allowed for on-demand grouping | `5000` |
 | `FACE_LIST_DEFAULT_LIMIT` | Default page size for `GET /v1/faces` | `100` |
 | `FACE_LIST_MAX_LIMIT` | Max page size for face id listing | `1000` |
-| `MODEL_DIR` | ONNX / InsightFace weights directory | `./models` |
-| `LIVENESS_MODEL_PATH` | MiniFASNet-V2 ONNX path | `./models/liveness/minifasnet_v2.onnx` |
+| `MODEL_DIR` | ONNX / InsightFace weights directory | `./models` (Compose image: `/app/models`) |
+| `LIVENESS_MODEL_PATH` | MiniFASNet-V2 ONNX path | `./models/liveness/minifasnet_v2.onnx` (Compose: `/app/models/liveness/minifasnet_v2.onnx`) |
 | `LIVENESS_THRESHOLD` | Min live-class probability | `0.50` |
 | `LIVENESS_CROP_SCALE` | Face crop expansion for MiniFASNet | `2.7` |
 | `MAX_IMAGE_SIDE` | Max image side after resize | `640` |
