@@ -1,7 +1,7 @@
 # iM.FaceId — Docker Compose Containerization (Design)
 
 **Date:** 2026-10-12  
-**Status:** Draft (pending written-spec review)  
+**Status:** Approved (implemented via 2026-10-12 plan)  
 **Project:** iM.FaceId  
 **Parent:** [2026-10-05-im-faceid-webapi-design.md](./2026-10-05-im-faceid-webapi-design.md)
 
