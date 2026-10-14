@@ -37,3 +37,23 @@ def test_compose_api_and_qdrant_limits_and_env():
     assert "127.0.0.1:6334:6334" in text
     assert '"6333:6333"' not in text and "'6333:6333'" not in text
     assert "restart: unless-stopped" in text
+
+
+def test_compose_gpu_profile_api_gpu_service():
+    text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "api-gpu:" in text
+    assert "profiles:" in text
+    assert "gpu" in text
+    assert "Dockerfile.gpu" in text
+    assert "FACE_DEVICE" in text
+    assert "gpus:" in text or "nvidia" in text.lower()
+
+
+def test_dockerfile_gpu_uses_onnxruntime_gpu():
+    text = (ROOT / "Dockerfile.gpu").read_text(encoding="utf-8")
+    assert "requirements-gpu.txt" in text
+    req = (ROOT / "requirements-gpu.txt").read_text(encoding="utf-8")
+    assert "onnxruntime-gpu" in req
+    assert "onnxruntime>=" not in req.replace("onnxruntime-gpu", "")
+    assert "download_models.py" in text
+    assert "uvicorn" in text
