@@ -93,6 +93,13 @@ async def _production_lifespan(app: FastAPI):
         resolved.effective,
         resolved.fallback_reason,
     )
+    if resolved.fallback_reason:
+        logger.warning(
+            "FACE_DEVICE fallback requested=%s effective=%s reason=%s",
+            resolved.requested,
+            resolved.effective,
+            resolved.fallback_reason,
+        )
     try:
         app.state.pipeline, resolved = build_insightface_with_fallback(
             settings, resolved
