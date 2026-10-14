@@ -1,7 +1,7 @@
 # iM.FaceId — Dynamic CPU/GPU Face Device (Design)
 
 **Date:** 2026-10-14  
-**Status:** Approved (pending implementation plan)  
+**Status:** Approved (implemented via 2026-10-14 plan)  
 **Project:** iM.FaceId  
 **Parent:** [2026-10-05-im-faceid-webapi-design.md](./2026-10-05-im-faceid-webapi-design.md)  
 **Related:** [2026-10-12-im-faceid-containerize-design.md](./2026-10-12-im-faceid-containerize-design.md)
