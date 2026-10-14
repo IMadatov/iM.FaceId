@@ -110,6 +110,7 @@ Optional: enroll a second photo of the same person, then **Groups** or **Search*
 |----------|---------|---------|
 | `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` (Compose: `http://qdrant:6333`) |
 | `QDRANT_COLLECTION` | Collection name | `faces` |
+| `FACE_DEVICE` | Inference device (`auto`, `cpu`, or `cuda`) | `auto` |
 | `FACE_MATCH_THRESHOLD` | 1:1 verify cutoff | `0.40` |
 | `FACE_SEARCH_MIN_SCORE` | Default min score for search | `0.40` |
 | `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |

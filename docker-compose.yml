@@ -29,6 +29,7 @@ services:
       QDRANT_COLLECTION: faces
       MODEL_DIR: /app/models
       LIVENESS_MODEL_PATH: /app/models/liveness/minifasnet_v2.onnx
+      FACE_DEVICE: ${FACE_DEVICE:-auto}
     depends_on:
       qdrant:
         condition: service_healthy
@@ -43,8 +44,6 @@ services:
       dockerfile: Dockerfile.gpu
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -52,7 +51,7 @@ services:
       QDRANT_COLLECTION: faces
       MODEL_DIR: /app/models
       LIVENESS_MODEL_PATH: /app/models/liveness/minifasnet_v2.onnx
-      FACE_DEVICE: auto
+      FACE_DEVICE: ${FACE_DEVICE:-auto}
     depends_on:
       qdrant:
         condition: service_healthy

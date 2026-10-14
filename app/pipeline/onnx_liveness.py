@@ -1,13 +1,17 @@
-"""Silent-Face-Anti-Spoofing MiniFASNet-V2 ONNX checker (CPU)."""
+"""Silent-Face-Anti-Spoofing MiniFASNet-V2 ONNX checker."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from app.errors import LivenessFailedError
+
+
+logger = logging.getLogger(__name__)
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -138,5 +142,17 @@ def load_liveness_checker(
         return OnnxLivenessChecker(
             model_path, crop_scale=crop_scale, providers=providers
         )
-    except Exception:
-        return UnavailableLivenessChecker()
+    except Exception as exc:
+        if not providers or "CUDAExecutionProvider" not in providers:
+            return UnavailableLivenessChecker()
+        logger.warning(
+            "CUDA liveness init failed (%s); falling back to CPU", exc
+        )
+        try:
+            return OnnxLivenessChecker(
+                model_path,
+                crop_scale=crop_scale,
+                providers=["CPUExecutionProvider"],
+            )
+        except Exception:
+            return UnavailableLivenessChecker()

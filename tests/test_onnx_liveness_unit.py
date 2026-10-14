@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 from app.errors import LivenessFailedError
-from app.pipeline.onnx_liveness import OnnxLivenessChecker, _softmax, crop_face_bgr
+from app.pipeline.onnx_liveness import (
+    OnnxLivenessChecker,
+    _softmax,
+    crop_face_bgr,
+    load_liveness_checker,
+)
 
 
 def test_softmax_sums_to_one():
@@ -87,3 +92,31 @@ def test_onnx_liveness_fails_when_spoof_logits(monkeypatch, tmp_path):
     img = np.full((120, 120, 3), 180, dtype=np.uint8)
     with pytest.raises(LivenessFailedError):
         checker.ensure_live(img, threshold=0.5)
+
+
+def test_load_liveness_checker_retries_cuda_failure_on_cpu(monkeypatch, caplog):
+    calls = []
+    sentinel = object()
+
+    def construct(model_path, *, crop_scale, providers):
+        calls.append(providers)
+        if providers[0] == "CUDAExecutionProvider":
+            raise RuntimeError("CUDA session failed")
+        return sentinel
+
+    monkeypatch.setattr(
+        "app.pipeline.onnx_liveness.OnnxLivenessChecker", construct
+    )
+
+    with caplog.at_level("WARNING", logger="app.pipeline.onnx_liveness"):
+        result = load_liveness_checker(
+            "model.onnx",
+            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        )
+
+    assert result is sentinel
+    assert calls == [
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+        ["CPUExecutionProvider"],
+    ]
+    assert "CUDA liveness init failed" in caplog.text
