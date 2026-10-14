@@ -72,14 +72,20 @@ class OnnxLivenessChecker:
 
     _LIVE_CLASS = 1
 
-    def __init__(self, model_path: str, *, crop_scale: float = 2.7) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        crop_scale: float = 2.7,
+        providers: list[str] | None = None,
+    ) -> None:
         import onnxruntime as ort
 
         path = Path(model_path)
         if not path.is_file():
             raise FileNotFoundError(f"liveness model not found: {model_path}")
         self._session = ort.InferenceSession(
-            str(path), providers=["CPUExecutionProvider"]
+            str(path), providers=providers or ["CPUExecutionProvider"]
         )
         self._input_name = self._session.get_inputs()[0].name
         self._crop_scale = crop_scale
@@ -122,11 +128,15 @@ class OnnxLivenessChecker:
         return score
 
 
-def load_liveness_checker(model_path: str, *, crop_scale: float = 2.7):
+def load_liveness_checker(
+    model_path: str, *, crop_scale: float = 2.7, providers: list[str] | None = None
+):
     """Return OnnxLivenessChecker or UnavailableLivenessChecker."""
     from app.pipeline.fake_liveness import UnavailableLivenessChecker
 
     try:
-        return OnnxLivenessChecker(model_path, crop_scale=crop_scale)
+        return OnnxLivenessChecker(
+            model_path, crop_scale=crop_scale, providers=providers
+        )
     except Exception:
         return UnavailableLivenessChecker()
