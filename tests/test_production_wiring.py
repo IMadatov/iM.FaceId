@@ -4,6 +4,19 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 
 
+def test_production_startup_fails_on_invalid_face_device(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setattr(
+        "app.config.get_settings",
+        lambda: Settings(face_device="gpu", model_dir="."),
+    )
+    app = create_app(testing=False)
+    with pytest.raises((RuntimeError, ValueError), match="FACE_DEVICE"):
+        with TestClient(app):
+            pass
+
+
 def test_production_startup_fails_clearly_when_pipeline_init_fails(monkeypatch):
     def boom(*args, **kwargs):
         raise OSError("models missing")
