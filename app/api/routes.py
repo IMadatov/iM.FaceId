@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.api.schemas import (
     ClearResponse,
@@ -10,6 +10,9 @@ from app.api.schemas import (
     FaceGroup,
     FaceIdResponse,
     FaceListResponse,
+    GroupRebuildAccepted,
+    GroupRebuildListResponse,
+    GroupRebuildStatus,
     GroupsResponse,
     HealthResponse,
     SearchHit,
@@ -19,13 +22,26 @@ from app.api.schemas import (
     VerifyResponse,
 )
 from app.config import Settings
-from app.deps import liveness_dep, pipeline_dep, settings_dep, store_dep
+from app.db.repository import GroupsRepository
+from app.deps import (
+    group_rebuild_dep,
+    liveness_dep,
+    pipeline_dep,
+    session_factory_dep,
+    settings_dep,
+    store_dep,
+)
 from app.errors import DependencyUnavailableError, FaceNotFoundError
 from app.imaging import decode_and_resize
+from app.jobs.group_rebuild import GroupRebuildConflict, GroupRebuildService
 from app.matching.cosine import cosine_similarity, is_match
-from app.matching.grouping import group_similar_faces
+from app.pipeline.image_quality import ensure_face_quality
 
 router = APIRouter()
+
+
+def _iso(dt) -> str | None:
+    return None if dt is None else dt.isoformat()
 
 
 async def _decode_upload(image: UploadFile, settings: Settings):
@@ -37,7 +53,33 @@ async def _decode_upload(image: UploadFile, settings: Settings):
     )
 
 
-def _maybe_liveness(img, *, liveness: bool, settings: Settings, checker, bbox=None):
+def _resolve(client: float | None, default: float) -> float:
+    return default if client is None else client
+
+
+def _maybe_face_quality(
+    img,
+    *,
+    liveness: bool,
+    bbox,
+    blur_min_variance: float,
+    brightness_min: float,
+    brightness_max: float,
+    min_side_px: float,
+):
+    if not liveness:
+        return
+    ensure_face_quality(
+        img,
+        bbox,
+        blur_min_variance=blur_min_variance,
+        brightness_min=brightness_min,
+        brightness_max=brightness_max,
+        min_side_px=min_side_px,
+    )
+
+
+def _maybe_liveness(img, *, liveness: bool, checker, threshold: float, bbox=None):
     if not liveness:
         return None
     if not checker.ready():
@@ -45,9 +87,7 @@ def _maybe_liveness(img, *, liveness: bool, settings: Settings, checker, bbox=No
             "liveness model not available "
             "(run scripts/download_liveness_model.py)"
         )
-    return checker.ensure_live(
-        img, threshold=settings.liveness_threshold, bbox=bbox
-    )
+    return checker.ensure_live(img, threshold=threshold, bbox=bbox)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -63,6 +103,11 @@ def health(
 async def enroll_face(
     image: UploadFile = File(...),
     liveness: bool = Form(False),
+    blur_min_variance: float | None = Form(None),
+    brightness_min: float | None = Form(None),
+    brightness_max: float | None = Form(None),
+    min_side_px: float | None = Form(None),
+    liveness_threshold: float | None = Form(None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -70,11 +115,22 @@ async def enroll_face(
 ) -> FaceIdResponse:
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
+    _maybe_face_quality(
+        img,
+        liveness=liveness,
+        bbox=detected.bbox,
+        blur_min_variance=_resolve(
+            blur_min_variance, settings.face_blur_min_variance
+        ),
+        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+    )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
-        settings=settings,
         checker=checker,
+        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     face_id = str(uuid.uuid4())
@@ -122,37 +178,127 @@ def stats(
     )
 
 
-@router.get("/v1/faces/groups", response_model=GroupsResponse)
-def list_face_groups(
+@router.post(
+    "/v1/faces/groups/rebuild",
+    response_model=GroupRebuildAccepted,
+    status_code=202,
+)
+def rebuild_face_groups(
+    background_tasks: BackgroundTasks,
     min_score: float | None = Query(default=None),
     min_size: int | None = Query(default=None),
+    top_k: int | None = Query(default=None, ge=1),
     settings: Settings = Depends(settings_dep),
     store=Depends(store_dep),
+    rebuild: GroupRebuildService = Depends(group_rebuild_dep),
+) -> GroupRebuildAccepted:
+    try:
+        run_id = rebuild.start(
+            store=store,
+            settings=settings,
+            min_score=min_score,
+            min_size=min_size,
+            top_k=top_k,
+        )
+    except GroupRebuildConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    background_tasks.add_task(rebuild.execute, run_id, store=store, settings=settings)
+    return GroupRebuildAccepted(run_id=run_id, status="running")
+
+
+def _group_rebuild_status(run) -> GroupRebuildStatus:
+    return GroupRebuildStatus(
+        run_id=run.id,
+        status=run.status.value,
+        threshold=run.threshold,
+        top_k=run.top_k,
+        min_size=run.min_size,
+        face_count=run.face_count,
+        group_count=run.group_count,
+        error=run.error,
+        started_at=_iso(run.started_at),
+        finished_at=_iso(run.finished_at),
+    )
+
+
+@router.get(
+    "/v1/faces/groups/rebuild",
+    response_model=GroupRebuildListResponse,
+)
+def list_group_rebuild_runs(
+    session_factory=Depends(session_factory_dep),
+) -> GroupRebuildListResponse:
+    session = session_factory()
+    try:
+        runs = GroupsRepository(session).list_runs()
+        return GroupRebuildListResponse(runs=[_group_rebuild_status(r) for r in runs])
+    finally:
+        session.close()
+
+
+@router.get(
+    "/v1/faces/groups/rebuild/{run_id}",
+    response_model=GroupRebuildStatus,
+)
+def get_group_rebuild_status(
+    run_id: str,
+    session_factory=Depends(session_factory_dep),
+) -> GroupRebuildStatus:
+    session = session_factory()
+    try:
+        run = GroupsRepository(session).get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"group run {run_id} not found")
+        return _group_rebuild_status(run)
+    finally:
+        session.close()
+
+
+@router.get("/v1/faces/groups", response_model=GroupsResponse)
+def list_face_groups(
+    min_size: int | None = Query(default=None),
+    settings: Settings = Depends(settings_dep),
+    session_factory=Depends(session_factory_dep),
 ) -> GroupsResponse:
-    threshold = settings.face_search_min_score if min_score is None else min_score
     size = settings.face_groups_min_size if min_size is None else min_size
     if size < 2:
         raise HTTPException(status_code=400, detail="min_size must be >= 2")
-    items = store.list_all()
-    if len(items) > settings.face_groups_max_faces:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"too many faces for on-demand grouping "
-                f"({len(items)} > {settings.face_groups_max_faces})"
-            ),
+    session = session_factory()
+    try:
+        snapshot = GroupsRepository(session).latest_completed()
+        if snapshot is None:
+            return GroupsResponse(
+                threshold=settings.face_search_min_score,
+                groups=[],
+                run_id=None,
+                built_at=None,
+            )
+        groups = [
+            FaceGroup(face_ids=g.face_ids, size=g.size)
+            for g in snapshot.groups
+            if g.size >= size
+        ]
+        return GroupsResponse(
+            threshold=snapshot.threshold,
+            groups=groups,
+            run_id=snapshot.run_id,
+            built_at=_iso(snapshot.built_at),
         )
-    groups = group_similar_faces(items, min_score=threshold, min_size=size)
-    return GroupsResponse(
-        threshold=threshold,
-        groups=[FaceGroup(face_ids=g, size=len(g)) for g in groups],
-    )
+    finally:
+        session.close()
 
 
 @router.post("/v1/faces/search", response_model=SearchResponse)
 async def search_faces(
     image: UploadFile = File(...),
     liveness: bool = Form(False),
+    blur_min_variance: float | None = Form(None),
+    brightness_min: float | None = Form(None),
+    brightness_max: float | None = Form(None),
+    min_side_px: float | None = Form(None),
+    liveness_threshold: float | None = Form(None),
     limit: int | None = Query(default=None),
     min_score: float | None = Query(default=None),
     settings: Settings = Depends(settings_dep),
@@ -165,11 +311,22 @@ async def search_faces(
     threshold = settings.face_search_min_score if min_score is None else min_score
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
+    _maybe_face_quality(
+        img,
+        liveness=liveness,
+        bbox=detected.bbox,
+        blur_min_variance=_resolve(
+            blur_min_variance, settings.face_blur_min_variance
+        ),
+        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+    )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
-        settings=settings,
         checker=checker,
+        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     hits = store.search(
@@ -187,6 +344,11 @@ async def update_face(
     face_id: str,
     image: UploadFile = File(...),
     liveness: bool = Form(False),
+    blur_min_variance: float | None = Form(None),
+    brightness_min: float | None = Form(None),
+    brightness_max: float | None = Form(None),
+    min_side_px: float | None = Form(None),
+    liveness_threshold: float | None = Form(None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -196,11 +358,22 @@ async def update_face(
         raise FaceNotFoundError(f"face {face_id} not found")
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
+    _maybe_face_quality(
+        img,
+        liveness=liveness,
+        bbox=detected.bbox,
+        blur_min_variance=_resolve(
+            blur_min_variance, settings.face_blur_min_variance
+        ),
+        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+    )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
-        settings=settings,
         checker=checker,
+        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     store.upsert(face_id, detected.embedding)
@@ -226,6 +399,12 @@ async def verify_face(
     face_id: str,
     image: UploadFile = File(...),
     liveness: bool = Form(False),
+    blur_min_variance: float | None = Form(None),
+    brightness_min: float | None = Form(None),
+    brightness_max: float | None = Form(None),
+    min_side_px: float | None = Form(None),
+    liveness_threshold: float | None = Form(None),
+    match_threshold: float | None = Form(None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -236,18 +415,30 @@ async def verify_face(
         raise FaceNotFoundError(f"face {face_id} not found")
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
+    _maybe_face_quality(
+        img,
+        liveness=liveness,
+        bbox=detected.bbox,
+        blur_min_variance=_resolve(
+            blur_min_variance, settings.face_blur_min_variance
+        ),
+        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+    )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
-        settings=settings,
         checker=checker,
+        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     score = cosine_similarity(stored, detected.embedding)
+    threshold = _resolve(match_threshold, settings.face_match_threshold)
     return VerifyResponse(
         face_id=face_id,
-        match=is_match(score, settings.face_match_threshold),
+        match=is_match(score, threshold),
         score=score,
-        threshold=settings.face_match_threshold,
+        threshold=threshold,
         liveness_score=live_score,
     )

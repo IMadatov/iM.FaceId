@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 from fastapi.testclient import TestClient
+from app.config import Settings
+from app.deps import settings_dep
 from app.main import create_app
 from app.pipeline.fake import FakeFacePipeline
 from app.store.memory import MemoryFaceStore
@@ -11,8 +13,36 @@ def _client():
     app.state.store = MemoryFaceStore()
     return TestClient(app)
 
-def _img_bytes(val: int = 120) -> bytes:
-    img = np.full((80, 80, 3), val, dtype=np.uint8)
+
+def _override_settings(app, **kwargs) -> Settings:
+    data = Settings().model_dump()
+    data.update(kwargs)
+    settings = Settings(**data)
+    app.dependency_overrides[settings_dep] = lambda: settings
+    return settings
+
+
+def _img_bytes(val: int = 120, size: int = 80) -> bytes:
+    img = np.full((size, size, 3), val, dtype=np.uint8)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    return buf.tobytes()
+
+
+def _textured_img_bytes(val: int = 120, size: int = 200) -> bytes:
+    img = np.full((size, size, 3), val, dtype=np.uint8)
+    img[::4, :] = np.clip(val + 80, 0, 255)
+    img[:, ::4] = np.clip(val + 80, 0, 255)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    return buf.tobytes()
+
+
+def _blurry_img_bytes(val: int = 120, size: int = 200) -> bytes:
+    img = np.full((size, size, 3), val, dtype=np.uint8)
+    img[::4, :] = np.clip(val + 80, 0, 255)
+    img[:, ::4] = np.clip(val + 80, 0, 255)
+    img = cv2.GaussianBlur(img, (31, 31), 0)
     ok, buf = cv2.imencode(".png", img)
     assert ok
     return buf.tobytes()
@@ -202,10 +232,22 @@ def test_groups_clusters_similar_enrollments():
     assert r1.status_code == r2.status_code == r3.status_code == 201
     id_a, id_b, id_c = r1.json()["face_id"], r2.json()["face_id"], r3.json()["face_id"]
 
-    r = c.get("/v1/faces/groups", params={"min_score": 0.99})
+    assert c.get("/v1/faces/groups").json()["groups"] == []
+
+    started = c.post("/v1/faces/groups/rebuild", params={"min_score": 0.99})
+    assert started.status_code == 202
+    run_id = started.json()["run_id"]
+
+    status = c.get(f"/v1/faces/groups/rebuild/{run_id}")
+    assert status.status_code == 200
+    assert status.json()["status"] == "completed"
+
+    r = c.get("/v1/faces/groups")
     assert r.status_code == 200
     body = r.json()
     assert body["threshold"] == 0.99
+    assert body["run_id"] == run_id
+    assert body["built_at"] is not None
     # identical fake embeddings for same mean image → one pair group; distant singleton omitted
     assert len(body["groups"]) == 1
     assert set(body["groups"][0]["face_ids"]) == {id_a, id_b}
@@ -213,16 +255,61 @@ def test_groups_clusters_similar_enrollments():
     assert id_c not in body["groups"][0]["face_ids"]
 
 
+def test_groups_rebuild_list_sorted_by_started_at_desc():
+    c = _client()
+    assert c.get("/v1/faces/groups/rebuild").json() == {"runs": []}
+
+    first = c.post("/v1/faces/groups/rebuild", params={"min_score": 0.99})
+    assert first.status_code == 202
+    first_id = first.json()["run_id"]
+    second = c.post("/v1/faces/groups/rebuild", params={"min_score": 0.98})
+    assert second.status_code == 202
+    second_id = second.json()["run_id"]
+
+    listed = c.get("/v1/faces/groups/rebuild")
+    assert listed.status_code == 200
+    runs = listed.json()["runs"]
+    assert [r["run_id"] for r in runs] == [second_id, first_id]
+    assert all(r["status"] == "completed" for r in runs)
+    assert runs[0]["started_at"] is not None
+    assert runs[0]["finished_at"] is not None
+    assert runs[0]["threshold"] == 0.98
+
+
 def test_groups_rejects_min_size_below_two():
     c = _client()
     r = c.get("/v1/faces/groups", params={"min_size": 1})
     assert r.status_code == 400
+    r2 = c.post("/v1/faces/groups/rebuild", params={"min_size": 1})
+    assert r2.status_code == 400
+
+
+def test_groups_rebuild_conflict_when_locked():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    service = app.state.group_rebuild
+    assert service._lock.acquire(blocking=False)
+    try:
+        c = TestClient(app)
+        r = c.post("/v1/faces/groups/rebuild")
+        assert r.status_code == 409
+    finally:
+        service._lock.release()
 
 
 def test_enroll_liveness_fail_422():
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()
     app.state.store = MemoryFaceStore()
+    # Isolate spoof path from quality gate (small flat test images).
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
     from app.pipeline.fake_liveness import FakeLivenessChecker
 
     app.state.liveness = FakeLivenessChecker(force_spoof=True)
@@ -237,7 +324,17 @@ def test_enroll_liveness_fail_422():
 
 
 def test_enroll_liveness_pass_returns_score():
-    c = _client()
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
+    c = TestClient(app)
     r = c.post(
         "/v1/faces",
         files={"image": ("a.png", _img_bytes(120), "image/png")},
@@ -252,6 +349,13 @@ def test_enroll_liveness_unavailable_503():
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()
     app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
     from app.pipeline.fake_liveness import UnavailableLivenessChecker
 
     app.state.liveness = UnavailableLivenessChecker()
@@ -264,29 +368,130 @@ def test_enroll_liveness_unavailable_503():
     assert r.status_code == 503
 
 
-def test_groups_rejects_when_over_max_faces():
+def test_enroll_blurry_with_liveness_quality_422():
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()
-    store = MemoryFaceStore()
-    store.list_all = lambda: [("x", np.ones(512, dtype=np.float32))] * 3  # type: ignore
-    app.state.store = store
-    # override settings via env is heavy; monkeypatch settings on dependency by
-    # replacing get path — use a tiny max via wrapping list_face_groups config:
-    from app.config import Settings
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=50.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=80.0,
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
+        data={"liveness": "true"},
+    )
+    assert r.status_code == 422
+    detail = r.json()["detail"].lower()
+    assert "quality" in detail or "blur" in detail
+    assert "liveness" not in detail
 
-    original = Settings.model_fields["face_groups_max_faces"].default
-    try:
-        # Build client that uses settings with max 2
-        class TinySettings(Settings):
-            face_groups_max_faces: int = 2
 
-        from app import deps
+def test_enroll_blurry_without_liveness_still_ok():
+    c = _client()
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
+    )
+    assert r.status_code == 201
 
-        app.dependency_overrides[deps.settings_dep] = lambda: TinySettings()
-        c = TestClient(app)
-        r = c.get("/v1/faces/groups")
-        assert r.status_code == 400
-        assert "too many faces" in r.json()["detail"]
-    finally:
-        app.dependency_overrides.clear()
-        _ = original
+
+def test_enroll_sharp_with_liveness_passes_quality():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=50.0,
+        face_brightness_min=40.0,
+        face_brightness_max=220.0,
+        face_min_side_px=80.0,
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _textured_img_bytes(120), "image/png")},
+        data={"liveness": "true"},
+    )
+    assert r.status_code == 201
+    assert r.json()["liveness_score"] is not None
+
+
+def test_enroll_client_blur_override_stricter_422():
+    """Server blur disabled; client Form requires blur → quality 422."""
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
+        data={"liveness": "true", "blur_min_variance": "50"},
+    )
+    assert r.status_code == 422
+    detail = r.json()["detail"].lower()
+    assert "quality" in detail or "blur" in detail
+
+
+def test_verify_client_match_threshold():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(app, face_match_threshold=0.99)
+    c = TestClient(app)
+    enroll = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _img_bytes(120), "image/png")},
+    )
+    face_id = enroll.json()["face_id"]
+    r = c.post(
+        f"/v1/faces/{face_id}/verify",
+        files={"image": ("b.png", _img_bytes(120), "image/png")},
+        data={"match_threshold": "0.0"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["threshold"] == 0.0
+    assert body["match"] is True
+
+
+def test_enroll_client_liveness_threshold_stricter_422():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+        liveness_threshold=0.50,
+    )
+    from app.pipeline.fake_liveness import FakeLivenessChecker
+
+    app.state.liveness = FakeLivenessChecker(score=0.60)
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _img_bytes(120), "image/png")},
+        data={"liveness": "true", "liveness_threshold": "0.90"},
+    )
+    assert r.status_code == 422
+    assert "liveness" in r.json()["detail"].lower()
+
+
+def test_groups_rebuild_status_not_found():
+    c = _client()
+    r = c.get("/v1/faces/groups/rebuild/00000000-0000-0000-0000-000000000000")
+    assert r.status_code == 404
