@@ -80,6 +80,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Open Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
+**Client integration:** full endpoint reference (request/response JSON, errors, flows) → [docs/CLIENT_API.md](docs/CLIENT_API.md)
+
 ## Swagger manual checklist
 
 Use **Try it out** on each endpoint in order:
