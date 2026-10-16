@@ -1,7 +1,7 @@
+import base64
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import ValidationError
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.api.schemas import (
     ClearResponse,
@@ -10,8 +10,10 @@ from app.api.schemas import (
     FaceExistsResponse,
     FaceGroup,
     FaceIdResponse,
+    FaceImageRequest,
     FaceListResponse,
-    FaceRequestOptions,
+    FaceSearchRequest,
+    FaceVerifyRequest,
     GroupRebuildAccepted,
     GroupRebuildListResponse,
     GroupRebuildStatus,
@@ -33,7 +35,7 @@ from app.deps import (
     settings_dep,
     store_dep,
 )
-from app.errors import DependencyUnavailableError, FaceNotFoundError
+from app.errors import DependencyUnavailableError, FaceNotFoundError, InvalidImageError
 from app.imaging import decode_and_resize
 from app.jobs.group_rebuild import GroupRebuildConflict, GroupRebuildService
 from app.matching.cosine import cosine_similarity, is_match
@@ -46,8 +48,14 @@ def _iso(dt) -> str | None:
     return None if dt is None else dt.isoformat()
 
 
-async def _decode_upload(image: UploadFile, settings: Settings):
-    data = await image.read()
+def _decode_base64_image(image_base64: str, settings: Settings):
+    raw = image_base64.strip()
+    if raw.startswith("data:") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    try:
+        data = base64.b64decode(raw, validate=False)
+    except Exception as exc:
+        raise InvalidImageError("invalid image_base64") from exc
     return decode_and_resize(
         data,
         max_side=settings.max_image_side,
@@ -57,15 +65,6 @@ async def _decode_upload(image: UploadFile, settings: Settings):
 
 def _resolve(client: float | None, default: float) -> float:
     return default if client is None else client
-
-
-def _parse_options(options: str | None) -> FaceRequestOptions:
-    if options is None or not options.strip():
-        return FaceRequestOptions()
-    try:
-        return FaceRequestOptions.model_validate_json(options)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid options: {exc}") from exc
 
 
 def _maybe_face_quality(
@@ -101,6 +100,27 @@ def _maybe_liveness(img, *, liveness: bool, checker, threshold: float, bbox=None
     return checker.ensure_live(img, threshold=threshold, bbox=bbox)
 
 
+def _run_quality_and_liveness(img, detected, body: FaceImageRequest, settings, checker):
+    _maybe_face_quality(
+        img,
+        liveness=body.liveness,
+        bbox=detected.bbox,
+        blur_min_variance=_resolve(
+            body.blur_min_variance, settings.face_blur_min_variance
+        ),
+        brightness_min=_resolve(body.brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(body.brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(body.min_side_px, settings.face_min_side_px),
+    )
+    return _maybe_liveness(
+        img,
+        liveness=body.liveness,
+        checker=checker,
+        threshold=_resolve(body.liveness_threshold, settings.liveness_threshold),
+        bbox=detected.bbox,
+    )
+
+
 @router.get("/health", response_model=HealthResponse)
 def health(
     pipeline=Depends(pipeline_dep), store=Depends(store_dep)
@@ -111,35 +131,17 @@ def health(
 
 
 @router.post("/v1/faces", response_model=FaceIdResponse, status_code=201)
-async def enroll_face(
-    image: UploadFile = File(...),
-    liveness: bool = Form(False),
-    options: str | None = Form(None),
+def enroll_face(
+    body: FaceImageRequest,
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
     checker=Depends(liveness_dep),
 ) -> FaceIdResponse:
-    opts = _parse_options(options)
-    img = await _decode_upload(image, settings)
+    img = _decode_base64_image(body.image_base64, settings)
     detected = pipeline.detect_bgr(img)
-    _maybe_face_quality(
-        img,
-        liveness=liveness,
-        bbox=detected.bbox,
-        blur_min_variance=_resolve(
-            opts.blur_min_variance, settings.face_blur_min_variance
-        ),
-        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
-    )
-    live_score = _maybe_liveness(
-        img,
-        liveness=liveness,
-        checker=checker,
-        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
-        bbox=detected.bbox,
+    live_score = _run_quality_and_liveness(
+        img, detected, body, settings, checker
     )
     face_id = str(uuid.uuid4())
     store.upsert(face_id, detected.embedding)
@@ -299,40 +301,24 @@ def list_face_groups(
 
 
 @router.post("/v1/faces/search", response_model=SearchResponse)
-async def search_faces(
-    image: UploadFile = File(...),
-    liveness: bool = Form(False),
-    options: str | None = Form(None),
-    limit: int | None = Query(default=None),
-    min_score: float | None = Query(default=None),
+def search_faces(
+    body: FaceSearchRequest,
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
     checker=Depends(liveness_dep),
 ) -> SearchResponse:
-    opts = _parse_options(options)
-    effective_limit = settings.face_search_default_limit if limit is None else limit
-    effective_limit = max(1, min(effective_limit, settings.face_search_max_limit))
-    threshold = settings.face_search_min_score if min_score is None else min_score
-    img = await _decode_upload(image, settings)
-    detected = pipeline.detect_bgr(img)
-    _maybe_face_quality(
-        img,
-        liveness=liveness,
-        bbox=detected.bbox,
-        blur_min_variance=_resolve(
-            opts.blur_min_variance, settings.face_blur_min_variance
-        ),
-        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
+    effective_limit = (
+        settings.face_search_default_limit if body.limit is None else body.limit
     )
-    live_score = _maybe_liveness(
-        img,
-        liveness=liveness,
-        checker=checker,
-        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
-        bbox=detected.bbox,
+    effective_limit = max(1, min(effective_limit, settings.face_search_max_limit))
+    threshold = (
+        settings.face_search_min_score if body.min_score is None else body.min_score
+    )
+    img = _decode_base64_image(body.image_base64, settings)
+    detected = pipeline.detect_bgr(img)
+    live_score = _run_quality_and_liveness(
+        img, detected, body, settings, checker
     )
     hits = store.search(
         detected.embedding, limit=effective_limit, min_score=threshold
@@ -345,11 +331,9 @@ async def search_faces(
 
 
 @router.put("/v1/faces/{face_id}", response_model=UpdateResponse)
-async def update_face(
+def update_face(
     face_id: str,
-    image: UploadFile = File(...),
-    liveness: bool = Form(False),
-    options: str | None = Form(None),
+    body: FaceImageRequest,
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -357,26 +341,10 @@ async def update_face(
 ) -> UpdateResponse:
     if store.get(face_id) is None:
         raise FaceNotFoundError(f"face {face_id} not found")
-    opts = _parse_options(options)
-    img = await _decode_upload(image, settings)
+    img = _decode_base64_image(body.image_base64, settings)
     detected = pipeline.detect_bgr(img)
-    _maybe_face_quality(
-        img,
-        liveness=liveness,
-        bbox=detected.bbox,
-        blur_min_variance=_resolve(
-            opts.blur_min_variance, settings.face_blur_min_variance
-        ),
-        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
-    )
-    live_score = _maybe_liveness(
-        img,
-        liveness=liveness,
-        checker=checker,
-        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
-        bbox=detected.bbox,
+    live_score = _run_quality_and_liveness(
+        img, detected, body, settings, checker
     )
     store.upsert(face_id, detected.embedding)
     return UpdateResponse(face_id=face_id, updated=True, liveness_score=live_score)
@@ -397,11 +365,9 @@ def delete_face(face_id: str, store=Depends(store_dep)) -> DeleteResponse:
 
 
 @router.post("/v1/faces/{face_id}/verify", response_model=VerifyResponse)
-async def verify_face(
+def verify_face(
     face_id: str,
-    image: UploadFile = File(...),
-    liveness: bool = Form(False),
-    options: str | None = Form(None),
+    body: FaceVerifyRequest,
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -410,29 +376,13 @@ async def verify_face(
     stored = store.get(face_id)
     if stored is None:
         raise FaceNotFoundError(f"face {face_id} not found")
-    opts = _parse_options(options)
-    img = await _decode_upload(image, settings)
+    img = _decode_base64_image(body.image_base64, settings)
     detected = pipeline.detect_bgr(img)
-    _maybe_face_quality(
-        img,
-        liveness=liveness,
-        bbox=detected.bbox,
-        blur_min_variance=_resolve(
-            opts.blur_min_variance, settings.face_blur_min_variance
-        ),
-        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
-    )
-    live_score = _maybe_liveness(
-        img,
-        liveness=liveness,
-        checker=checker,
-        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
-        bbox=detected.bbox,
+    live_score = _run_quality_and_liveness(
+        img, detected, body, settings, checker
     )
     score = cosine_similarity(stored, detected.embedding)
-    threshold = _resolve(opts.match_threshold, settings.face_match_threshold)
+    threshold = _resolve(body.match_threshold, settings.face_match_threshold)
     return VerifyResponse(
         face_id=face_id,
         match=is_match(score, threshold),

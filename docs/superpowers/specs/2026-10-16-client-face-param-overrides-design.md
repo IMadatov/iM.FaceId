@@ -8,107 +8,90 @@
 
 ## 1. Intent
 
-Let API clients override face pipeline thresholds per request—image quality (blur, brightness, min face side), liveness score threshold, and verify match threshold—without changing server `.env` defaults.
+Let API clients override face pipeline thresholds per request—and send the image—via a single **`application/json`** body (Swagger Request body like a typical login API), without changing server `.env` defaults.
 
-**Success looks like:** omitting `options` preserves current behavior; sending a JSON `options` Form field changes effective thresholds for that call only; search continues to use existing Query `min_score` / `limit`.
+**Success looks like:** omitting optional keys preserves current behavior; sending JSON fields changes effective thresholds for that call only; Swagger shows a required JSON request body (not multipart).
 
 ## 2. Goals and success criteria
 
 | Goal | Success |
 |------|---------|
-| Per-request overrides | Optional multipart Form field `options` (JSON object) on enroll, update, search, verify |
-| Defaults | Omit `options` or omit a key → `Settings` / `.env` value |
-| Full override | No server floors/ceilings; client may disable quality checks (same semantics as env: blur `0`, brightness `0`/`255`, min side `0`) |
-| Scope of knobs | Quality + `liveness_threshold` on all liveness-capable image endpoints; `match_threshold` on verify; search score via existing Query `min_score` |
-| Compatibility | Existing clients unchanged (`liveness` Form bool kept); search `min_score` stays Query |
+| Transport | `application/json` body on enroll, update, search, verify |
+| Image | Required `image_base64` (raw base64 or `data:` URL) |
+| Liveness flag | JSON `liveness` (default `false`) — not a separate Form field |
+| Defaults | Omit a key → `Settings` / `.env` value |
+| Full override | No server floors/ceilings; disable semantics unchanged |
+| Scope of knobs | Quality + `liveness_threshold`; verify `match_threshold`; search `limit` / `min_score` in the same JSON body |
+| Compatibility | Multipart `/v1/faces` uploads removed (breaking change) |
 
 ## 3. Constraints (agreed)
 
 | Decision | Choice |
 |----------|--------|
-| Transport | Multipart file + Form `liveness` + optional Form `options` (JSON string) |
-| Override policy | Full override (option A) |
-| Endpoints | All image endpoints that already take `liveness` (option A) |
-| Search score | Keep Query `min_score` / `limit`; do not put in `options` |
-| Quality when `liveness=false` | Overrides accepted but ignored (quality still only runs on liveness path) |
-| Response shape | No new fields; verify/search already return effective `threshold` |
-| Invalid JSON / unknown keys | HTTP `422` (`extra=forbid` on options model) |
+| Transport | JSON body only (Login-style Swagger) |
+| Override policy | Full override |
+| Endpoints | enroll, update, search, verify |
+| Search score / limit | In JSON body (rebuild still uses Query) |
+| Quality when `liveness=false` | Threshold keys accepted but ignored |
+| Response shape | Unchanged; verify/search return effective `threshold` |
+| Unknown keys | HTTP `422` (`extra=forbid`) |
 
 ## 4. Architecture
 
 ```
-multipart: image + liveness + optional options (JSON string)
+application/json body
+  image_base64 + liveness + optional thresholds
         │
         ▼
-  parse FaceRequestOptions; resolve: key if set else settings.*
+  decode base64 → decode_and_resize
         │
         ▼
-decode → detect_bgr
-              │
-              ├─ liveness=false → store / search / verify
-              │     (quality + MiniFASNet skipped;
-              │      verify uses resolved match_threshold)
-              │
-              └─ liveness=true
-                        │
-                        ▼
-               ensure_face_quality(resolved quality knobs)
-                        │ fail → ImageQualityError (422)
-                        ▼
-               MiniFASNet ensure_live(resolved liveness_threshold)
-                        │ fail → LivenessFailedError (422)
-                        ▼
-               store / search / verify
+detect_bgr → (if liveness) quality → (if liveness) MiniFASNet → business logic
 ```
 
-### Endpoint → overrides
+### Request models
 
-| Endpoint | `options` JSON keys | Other |
-|----------|---------------------|-------|
-| `POST /v1/faces` (enroll) | quality + `liveness_threshold` | `liveness` Form |
-| `PUT /v1/faces/{face_id}` (update) | quality + `liveness_threshold` | `liveness` Form |
-| `POST /v1/faces/search` | quality + `liveness_threshold` | `liveness` Form; Query `min_score`, `limit` |
-| `POST /v1/faces/{face_id}/verify` | quality + `liveness_threshold` + `match_threshold` | `liveness` Form |
+| Endpoint | Body model | Extra fields |
+|----------|------------|--------------|
+| `POST /v1/faces` | `FaceImageRequest` | — |
+| `PUT /v1/faces/{face_id}` | `FaceImageRequest` | — |
+| `POST /v1/faces/search` | `FaceSearchRequest` | `limit`, `min_score` |
+| `POST /v1/faces/{face_id}/verify` | `FaceVerifyRequest` | `match_threshold` |
 
-## 5. `options` JSON catalog
+## 5. JSON field catalog
 
 | JSON key | Settings default | Applied when |
 |----------|------------------|--------------|
+| `image_base64` | (required) | always |
+| `liveness` | `false` | always |
 | `blur_min_variance` | `face_blur_min_variance` | `liveness=true` |
 | `brightness_min` | `face_brightness_min` | `liveness=true` |
 | `brightness_max` | `face_brightness_max` | `liveness=true` |
 | `min_side_px` | `face_min_side_px` | `liveness=true` |
 | `liveness_threshold` | `liveness_threshold` | `liveness=true` |
-| `match_threshold` | `face_match_threshold` | verify only (ignored on other endpoints) |
+| `match_threshold` | `face_match_threshold` | verify only |
+| `limit` / `min_score` | search defaults | search only |
 
-**Resolve rule:** `effective = options.key if set else settings.<field>`.
-
-**Errors:** invalid / unknown JSON → HTTP `422`. Quality and liveness failures unchanged (`ImageQualityError` / `LivenessFailedError`, both HTTP `422`).
+**Resolve rule:** `effective = body.key if set else settings.<field>`.
 
 ## 6. Implementation shape
 
-- `FaceRequestOptions` in `app/api/schemas.py`; `_parse_options` in `app/api/routes.py`.
-- Endpoints take `options: str | None = Form(None)`; resolve into `_maybe_face_quality` / `_maybe_liveness` / verify match.
-- Document in README / `.env.example` (env = server defaults; `options` = per-request).
-- No new persistence, auth, or response schema fields.
+- Schemas: `FaceImageRequest`, `FaceVerifyRequest`, `FaceSearchRequest` in `app/api/schemas.py`
+- Routes: `_decode_base64_image`, `_run_quality_and_liveness`; no multipart File/Form on image endpoints
+- Docs: README curl with `Content-Type: application/json`
 
 ## 7. Non-goals
 
-- Server-enforced min/max bands or “stricter-only” overrides
-- Flat Form floats for each knob (replaced by JSON `options`)
-- Full `application/json` body with base64 image
-- Moving search `min_score` into `options` (or deprecating Query)
-- Client profiles, API-key-scoped defaults, or stored presets
-- Quality checks when `liveness=false`
+- Keeping multipart file upload alongside JSON
+- Server-enforced min/max bands
+- Client profiles / stored presets
+- Quality when `liveness=false`
 - Exposing grouping / ANN / upload-size / crop-scale knobs
-- Changing MiniFASNet crop scale or model paths per request
 
 ## 8. Testing
 
-- Omit `options` → behavior identical to current defaults
-- `liveness=true` + stricter `blur_min_variance` in `options` → blurry image `422` quality
-- `liveness=true` + custom `liveness_threshold` affects MiniFASNet pass/fail
-- Verify with custom `match_threshold` → `match` and returned `threshold` use client value
-- Invalid `options` JSON → `422`
-- Search Query `min_score` unchanged
-- Resolve helper: missing key → default; explicit `0` → disable blur check
+- Omit optional keys → env defaults
+- `liveness=true` + stricter blur / liveness_threshold → expected `422`
+- Verify `match_threshold` reflected in response
+- Unknown JSON field → `422`
+- Empty / corrupt base64 → `400`

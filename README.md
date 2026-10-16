@@ -84,24 +84,25 @@ Open Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 Use **Try it out** on each endpoint in order:
 
-1. **Enroll** — `POST /v1/faces` with a clear single-face photo → save the returned `face_id`. Optional form field `liveness=true` runs MiniFASNet anti-spoof first.
-2. **Update** — `PUT /v1/faces/{face_id}` with a newer photo of the same person → same `face_id`, `"updated": true` (optional `liveness=true`).
-3. **Search** — `POST /v1/faces/search` with a probe image → top-K similar `face_id`s and scores (useful for duplicate-enrollment checks; optional `liveness=true`).
+1. **Enroll** — `POST /v1/faces` with JSON body (`image_base64` + optional knobs) → save the returned `face_id`. Set `"liveness": true` to run MiniFASNet anti-spoof first.
+2. **Update** — `PUT /v1/faces/{face_id}` with the same JSON shape → same `face_id`, `"updated": true`.
+3. **Search** — `POST /v1/faces/search` with JSON (`image_base64`, optional `limit` / `min_score` / liveness knobs) → top-K similar `face_id`s and scores.
 4. **Groups rebuild** — `POST /v1/faces/groups/rebuild` → starts an async ANN-graph job (`202` + `run_id`). List runs with `GET /v1/faces/groups/rebuild` (newest `started_at` first) or poll `GET /v1/faces/groups/rebuild/{run_id}` until `completed`. Concurrent rebuilds return `409`.
 5. **Groups** — `GET /v1/faces/groups` → reads the latest **completed** run from Postgres (not on-demand O(n²)). Empty if no rebuild has finished yet.
-6. **Verify** — `POST /v1/faces/{face_id}/verify` with a probe image → `match` and `score` vs threshold (optional `liveness=true`).
+6. **Verify** — `POST /v1/faces/{face_id}/verify` with JSON (`image_base64`, optional `match_threshold` / liveness knobs) → `match` and `score` vs threshold.
 7. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`; verify/search should no longer find that id (`404` or absent from results).
 8. **Clear all** — `DELETE /v1/faces` → wipes every embedding (`deleted_count`); use only from a trusted backend (no auth in MVP). Group tables in Postgres are unchanged until the next rebuild.
 9. **Count / list / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces?limit=&offset=`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no vectors returned).
 
-Liveness is **off by default**. When `liveness=true`, the service detects the face first, runs **face quality** checks (blur / brightness / min face size — defaults via env, overridable per request), then crops with `LIVENESS_CROP_SCALE` (Silent-Face 2.7) and runs MiniFASNet. Quality or spoof fail → `422` (distinct messages); if the ONNX model is missing → `503`.
+Image endpoints use **`application/json`** (Swagger Request body like a normal login API). Required: `image_base64` (raw base64 or `data:image/...;base64,...`). Optional: `liveness` (default `false`), `blur_min_variance`, `brightness_min`, `brightness_max`, `min_side_px`, `liveness_threshold`; verify also `match_threshold`; search also `limit` / `min_score`. Omit a key → env default. Full override — clients may relax or disable checks (same disable values as env).
 
-Optional Form field `options` — a JSON object (omit → env defaults). Keys: `blur_min_variance`, `brightness_min`, `brightness_max`, `min_side_px`, `liveness_threshold` on enroll/update/search/verify; `match_threshold` on verify only. Search score still uses Query `min_score`. `liveness` stays a separate Form bool. Full override — clients may relax or disable checks (same disable values as env).
+Liveness is **off by default**. When `liveness` is `true`, the service detects the face first, runs **face quality** checks, then crops with `LIVENESS_CROP_SCALE` (Silent-Face 2.7) and runs MiniFASNet. Quality or spoof fail → `422` (distinct messages); if the ONNX model is missing → `503`.
 
 ```bash
-curl -F image=@face.png -F liveness=true \
-  -F 'options={"blur_min_variance":80,"liveness_threshold":0.7}' \
-  http://localhost:8000/v1/faces
+IMG=$(base64 -w0 face.png)
+curl -s http://localhost:8000/v1/faces \
+  -H 'Content-Type: application/json' \
+  -d "{\"image_base64\":\"$IMG\",\"liveness\":true,\"blur_min_variance\":80,\"liveness_threshold\":0.7}"
 ```
 
 Optional: enroll a second photo of the same person, then **rebuild groups** or **Search** — both ids should appear together (fraud signal).
@@ -113,8 +114,8 @@ Optional: enroll a second photo of the same person, then **rebuild groups** or *
 | `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` (Compose: `http://qdrant:6333`) |
 | `QDRANT_COLLECTION` | Collection name | `faces` |
 | `DATABASE_URL` | SQLAlchemy URL for group runs (host Postgres) | See `.env` / `.env.example` (`imfaceid` @ `localhost` or `host.docker.internal`) |
-| `FACE_MATCH_THRESHOLD` | Default 1:1 verify cutoff (`options.match_threshold` overrides) | `0.40` |
-| `FACE_SEARCH_MIN_SCORE` | Default min score for search / group rebuild (Query `min_score` overrides) | `0.40` |
+| `FACE_MATCH_THRESHOLD` | Default 1:1 verify cutoff (JSON `match_threshold` overrides) | `0.40` |
+| `FACE_SEARCH_MIN_SCORE` | Default min score for search / group rebuild (JSON `min_score` on search; Query on rebuild) | `0.40` |
 | `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |
 | `FACE_SEARCH_MAX_LIMIT` | Maximum search limit | `20` |
 | `FACE_GROUPS_MIN_SIZE` | Default minimum group size | `2` |
@@ -125,12 +126,12 @@ Optional: enroll a second photo of the same person, then **rebuild groups** or *
 | `FACE_LIST_MAX_LIMIT` | Max page size for face id listing | `1000` |
 | `MODEL_DIR` | ONNX / InsightFace weights directory | `./models` (Compose image: `/app/models`) |
 | `LIVENESS_MODEL_PATH` | MiniFASNet-V2 ONNX path | `./models/liveness/minifasnet_v2.onnx` (Compose: `/app/models/liveness/minifasnet_v2.onnx`) |
-| `LIVENESS_THRESHOLD` | Default min live-class probability (`options.liveness_threshold` overrides) | `0.50` |
+| `LIVENESS_THRESHOLD` | Default min live-class probability (JSON `liveness_threshold` overrides) | `0.50` |
 | `LIVENESS_CROP_SCALE` | Face crop expansion for MiniFASNet | `2.7` |
-| `FACE_BLUR_MIN_VARIANCE` | Default min Laplacian variance (`liveness=true`); `options` override; `0` disables | `50` |
-| `FACE_BRIGHTNESS_MIN` | Default min mean gray; `options` override; `0` disables low check | `40` |
-| `FACE_BRIGHTNESS_MAX` | Default max mean gray; `options` override; `255` disables high check | `220` |
-| `FACE_MIN_SIDE_PX` | Default min face bbox side in px; `options` override; `0` disables | `80` |
+| `FACE_BLUR_MIN_VARIANCE` | Default min Laplacian variance (`liveness=true`); JSON override; `0` disables | `50` |
+| `FACE_BRIGHTNESS_MIN` | Default min mean gray; JSON override; `0` disables low check | `40` |
+| `FACE_BRIGHTNESS_MAX` | Default max mean gray; JSON override; `255` disables high check | `220` |
+| `FACE_MIN_SIDE_PX` | Default min face bbox side in px; JSON override; `0` disables | `80` |
 | `MAX_IMAGE_SIDE` | Max image side after resize | `640` |
 | `MAX_UPLOAD_BYTES` | Upload size limit (bytes) | `5000000` |
 

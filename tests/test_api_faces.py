@@ -1,4 +1,4 @@
-import json
+import base64
 
 import numpy as np
 import cv2
@@ -8,6 +8,7 @@ from app.deps import settings_dep
 from app.main import create_app
 from app.pipeline.fake import FakeFacePipeline
 from app.store.memory import MemoryFaceStore
+
 
 def _client():
     app = create_app(testing=True)
@@ -49,32 +50,37 @@ def _blurry_img_bytes(val: int = 120, size: int = 200) -> bytes:
     assert ok
     return buf.tobytes()
 
+
+def _face_json(img: bytes, **kwargs):
+    body = {"image_base64": base64.b64encode(img).decode("ascii")}
+    body.update(kwargs)
+    return body
+
+
 def test_enroll_update_verify_search_delete_flow():
     c = _client()
-    r = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
+    r = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
     assert r.status_code == 201
     face_id = r.json()["face_id"]
 
-    r2 = c.put(f"/v1/faces/{face_id}", files={"image": ("b.png", _img_bytes(121), "image/png")})
+    r2 = c.put(f"/v1/faces/{face_id}", json=_face_json(_img_bytes(121)))
     assert r2.status_code == 200
     assert r2.json()["updated"] is True
 
     r3 = c.post(
         f"/v1/faces/{face_id}/verify",
-        files={"image": ("c.png", _img_bytes(121), "image/png")},
+        json=_face_json(_img_bytes(121)),
     )
     assert r3.status_code == 200
     body = r3.json()
     assert body["face_id"] == face_id
     assert "score" in body and "match" in body
 
-    # second enroll then search
-    r4 = c.post("/v1/faces", files={"image": ("d.png", _img_bytes(121), "image/png")})
+    r4 = c.post("/v1/faces", json=_face_json(_img_bytes(121)))
     assert r4.status_code == 201
     r5 = c.post(
         "/v1/faces/search",
-        files={"image": ("e.png", _img_bytes(121), "image/png")},
-        params={"limit": 5},
+        json=_face_json(_img_bytes(121), limit=5),
     )
     assert r5.status_code == 200
     assert "results" in r5.json()
@@ -88,8 +94,8 @@ def test_enroll_update_verify_search_delete_flow():
 
 def test_clear_all_faces():
     c = _client()
-    r1 = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
-    r2 = c.post("/v1/faces", files={"image": ("b.png", _img_bytes(130), "image/png")})
+    r1 = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
+    r2 = c.post("/v1/faces", json=_face_json(_img_bytes(130)))
     assert r1.status_code == r2.status_code == 201
     id_a, id_b = r1.json()["face_id"], r2.json()["face_id"]
 
@@ -117,8 +123,8 @@ def test_count_list_get_stats():
         "pipeline_ok": True,
     }
 
-    r1 = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
-    r2 = c.post("/v1/faces", files={"image": ("b.png", _img_bytes(140), "image/png")})
+    r1 = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
+    r2 = c.post("/v1/faces", json=_face_json(_img_bytes(140)))
     assert r1.status_code == r2.status_code == 201
     id_a, id_b = r1.json()["face_id"], r2.json()["face_id"]
 
@@ -144,23 +150,27 @@ def test_count_list_get_stats():
     assert stats["store_ok"] is True
     assert stats["pipeline_ok"] is True
 
+
 def test_verify_unknown_404():
     c = _client()
     r = c.post(
         "/v1/faces/00000000-0000-0000-0000-000000000000/verify",
-        files={"image": ("a.png", _img_bytes(), "image/png")},
+        json=_face_json(_img_bytes()),
     )
     assert r.status_code == 404
 
+
 def test_empty_image_400():
     c = _client()
-    r = c.post("/v1/faces", files={"image": ("a.png", b"", "image/png")})
+    r = c.post("/v1/faces", json={"image_base64": ""})
     assert r.status_code == 400
+
 
 def test_no_face_422():
     c = _client()
-    r = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(0), "image/png")})
+    r = c.post("/v1/faces", json=_face_json(_img_bytes(0)))
     assert r.status_code == 422
+
 
 def test_health_503_when_store_down():
     app = create_app(testing=True)
@@ -172,18 +182,21 @@ def test_health_503_when_store_down():
     r = c.get("/health")
     assert r.status_code == 503
 
+
 def test_corrupt_image_400():
     c = _client()
-    r = c.post("/v1/faces", files={"image": ("a.png", b"not-an-image", "image/png")})
+    r = c.post("/v1/faces", json=_face_json(b"not-an-image"))
     assert r.status_code == 400
+
 
 def test_multiple_faces_422():
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline(faces_count=2)
     app.state.store = MemoryFaceStore()
     c = TestClient(app)
-    r = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
+    r = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
     assert r.status_code == 422
+
 
 def test_search_limit_clamped_to_max():
     app = create_app(testing=True)
@@ -200,14 +213,14 @@ def test_search_limit_clamped_to_max():
     store.search = spy_search  # type: ignore[method-assign]
     app.state.store = store
     c = TestClient(app)
-    c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
+    c.post("/v1/faces", json=_face_json(_img_bytes(120)))
     r = c.post(
         "/v1/faces/search",
-        files={"image": ("b.png", _img_bytes(120), "image/png")},
-        params={"limit": 999},
+        json=_face_json(_img_bytes(120), limit=999),
     )
     assert r.status_code == 200
     assert received["limit"] == 20
+
 
 def test_verify_503_when_store_raises_dependency():
     from app.errors import DependencyUnavailableError
@@ -221,16 +234,16 @@ def test_verify_503_when_store_raises_dependency():
     c = TestClient(app)
     r = c.post(
         "/v1/faces/11111111-1111-1111-1111-111111111111/verify",
-        files={"image": ("a.png", _img_bytes(), "image/png")},
+        json=_face_json(_img_bytes()),
     )
     assert r.status_code == 503
 
 
 def test_groups_clusters_similar_enrollments():
     c = _client()
-    r1 = c.post("/v1/faces", files={"image": ("a.png", _img_bytes(120), "image/png")})
-    r2 = c.post("/v1/faces", files={"image": ("b.png", _img_bytes(120), "image/png")})
-    r3 = c.post("/v1/faces", files={"image": ("c.png", _img_bytes(200), "image/png")})
+    r1 = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
+    r2 = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
+    r3 = c.post("/v1/faces", json=_face_json(_img_bytes(200)))
     assert r1.status_code == r2.status_code == r3.status_code == 201
     id_a, id_b, id_c = r1.json()["face_id"], r2.json()["face_id"], r3.json()["face_id"]
 
@@ -250,7 +263,6 @@ def test_groups_clusters_similar_enrollments():
     assert body["threshold"] == 0.99
     assert body["run_id"] == run_id
     assert body["built_at"] is not None
-    # identical fake embeddings for same mean image → one pair group; distant singleton omitted
     assert len(body["groups"]) == 1
     assert set(body["groups"][0]["face_ids"]) == {id_a, id_b}
     assert body["groups"][0]["size"] == 2
@@ -304,7 +316,6 @@ def test_enroll_liveness_fail_422():
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()
     app.state.store = MemoryFaceStore()
-    # Isolate spoof path from quality gate (small flat test images).
     _override_settings(
         app,
         face_blur_min_variance=0.0,
@@ -316,11 +327,7 @@ def test_enroll_liveness_fail_422():
 
     app.state.liveness = FakeLivenessChecker(force_spoof=True)
     c = TestClient(app)
-    r = c.post(
-        "/v1/faces",
-        files={"image": ("a.png", _img_bytes(120), "image/png")},
-        data={"liveness": "true"},
-    )
+    r = c.post("/v1/faces", json=_face_json(_img_bytes(120), liveness=True))
     assert r.status_code == 422
     assert "liveness" in r.json()["detail"].lower()
 
@@ -337,11 +344,7 @@ def test_enroll_liveness_pass_returns_score():
         face_min_side_px=0.0,
     )
     c = TestClient(app)
-    r = c.post(
-        "/v1/faces",
-        files={"image": ("a.png", _img_bytes(120), "image/png")},
-        data={"liveness": "true"},
-    )
+    r = c.post("/v1/faces", json=_face_json(_img_bytes(120), liveness=True))
     assert r.status_code == 201
     assert r.json()["liveness_score"] is not None
     assert r.json()["liveness_score"] >= 0.5
@@ -362,11 +365,7 @@ def test_enroll_liveness_unavailable_503():
 
     app.state.liveness = UnavailableLivenessChecker()
     c = TestClient(app)
-    r = c.post(
-        "/v1/faces",
-        files={"image": ("a.png", _img_bytes(120), "image/png")},
-        data={"liveness": "true"},
-    )
+    r = c.post("/v1/faces", json=_face_json(_img_bytes(120), liveness=True))
     assert r.status_code == 503
 
 
@@ -384,8 +383,7 @@ def test_enroll_blurry_with_liveness_quality_422():
     c = TestClient(app)
     r = c.post(
         "/v1/faces",
-        files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
-        data={"liveness": "true"},
+        json=_face_json(_blurry_img_bytes(120), liveness=True),
     )
     assert r.status_code == 422
     detail = r.json()["detail"].lower()
@@ -395,10 +393,7 @@ def test_enroll_blurry_with_liveness_quality_422():
 
 def test_enroll_blurry_without_liveness_still_ok():
     c = _client()
-    r = c.post(
-        "/v1/faces",
-        files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
-    )
+    r = c.post("/v1/faces", json=_face_json(_blurry_img_bytes(120)))
     assert r.status_code == 201
 
 
@@ -416,15 +411,14 @@ def test_enroll_sharp_with_liveness_passes_quality():
     c = TestClient(app)
     r = c.post(
         "/v1/faces",
-        files={"image": ("a.png", _textured_img_bytes(120), "image/png")},
-        data={"liveness": "true"},
+        json=_face_json(_textured_img_bytes(120), liveness=True),
     )
     assert r.status_code == 201
     assert r.json()["liveness_score"] is not None
 
 
 def test_enroll_client_blur_override_stricter_422():
-    """Server blur disabled; client options JSON requires blur → quality 422."""
+    """Server blur disabled; client JSON requires blur → quality 422."""
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()
     app.state.store = MemoryFaceStore()
@@ -438,11 +432,11 @@ def test_enroll_client_blur_override_stricter_422():
     c = TestClient(app)
     r = c.post(
         "/v1/faces",
-        files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
-        data={
-            "liveness": "true",
-            "options": json.dumps({"blur_min_variance": 50}),
-        },
+        json=_face_json(
+            _blurry_img_bytes(120),
+            liveness=True,
+            blur_min_variance=50,
+        ),
     )
     assert r.status_code == 422
     detail = r.json()["detail"].lower()
@@ -455,15 +449,11 @@ def test_verify_client_match_threshold():
     app.state.store = MemoryFaceStore()
     _override_settings(app, face_match_threshold=0.99)
     c = TestClient(app)
-    enroll = c.post(
-        "/v1/faces",
-        files={"image": ("a.png", _img_bytes(120), "image/png")},
-    )
+    enroll = c.post("/v1/faces", json=_face_json(_img_bytes(120)))
     face_id = enroll.json()["face_id"]
     r = c.post(
         f"/v1/faces/{face_id}/verify",
-        files={"image": ("b.png", _img_bytes(120), "image/png")},
-        data={"options": json.dumps({"match_threshold": 0.0})},
+        json=_face_json(_img_bytes(120), match_threshold=0.0),
     )
     assert r.status_code == 200
     body = r.json()
@@ -489,25 +479,23 @@ def test_enroll_client_liveness_threshold_stricter_422():
     c = TestClient(app)
     r = c.post(
         "/v1/faces",
-        files={"image": ("a.png", _img_bytes(120), "image/png")},
-        data={
-            "liveness": "true",
-            "options": json.dumps({"liveness_threshold": 0.90}),
-        },
+        json=_face_json(
+            _img_bytes(120),
+            liveness=True,
+            liveness_threshold=0.90,
+        ),
     )
     assert r.status_code == 422
     assert "liveness" in r.json()["detail"].lower()
 
 
-def test_enroll_invalid_options_json_422():
+def test_enroll_unknown_json_field_422():
     c = _client()
     r = c.post(
         "/v1/faces",
-        files={"image": ("a.png", _img_bytes(120), "image/png")},
-        data={"options": "{not-json"},
+        json=_face_json(_img_bytes(120), not_a_field=1),
     )
     assert r.status_code == 422
-    assert "options" in str(r.json()["detail"]).lower()
 
 
 def test_groups_rebuild_status_not_found():

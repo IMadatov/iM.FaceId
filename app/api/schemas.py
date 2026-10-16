@@ -1,17 +1,27 @@
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class FaceRequestOptions(BaseModel):
-    """Optional per-request overrides (multipart Form field ``options`` as JSON)."""
+class FaceImageRequest(BaseModel):
+    """JSON body for enroll / update: base64 image + optional thresholds."""
 
     model_config = ConfigDict(extra="forbid")
 
+    image_base64: str
+    liveness: bool = False
     blur_min_variance: float | None = None
     brightness_min: float | None = None
     brightness_max: float | None = None
     min_side_px: float | None = None
     liveness_threshold: float | None = None
-    match_threshold: float | None = None  # verify only; ignored elsewhere
+
+
+class FaceVerifyRequest(FaceImageRequest):
+    match_threshold: float | None = None
+
+
+class FaceSearchRequest(FaceImageRequest):
+    limit: int | None = None
+    min_score: float | None = None
 
 
 class HealthResponse(BaseModel):
