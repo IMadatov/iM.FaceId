@@ -24,6 +24,27 @@ class FaceSearchRequest(FaceImageRequest):
     min_score: float | None = None
 
 
+class FaceListRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int | None = None
+    offset: int = Field(default=0, ge=0)
+
+
+class GroupsListRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_size: int | None = None
+
+
+class GroupRebuildRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_score: float | None = None
+    min_size: int | None = None
+    top_k: int | None = Field(default=None, ge=1)
+
+
 class HealthResponse(BaseModel):
     status: str
     detail: str | None = None

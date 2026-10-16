@@ -84,17 +84,18 @@ Open Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 Use **Try it out** on each endpoint in order:
 
-1. **Enroll** — `POST /v1/faces` with JSON body (`image_base64` + optional knobs) → save the returned `face_id`. Set `"liveness": true` to run MiniFASNet anti-spoof first.
-2. **Update** — `PUT /v1/faces/{face_id}` with the same JSON shape → same `face_id`, `"updated": true`.
-3. **Search** — `POST /v1/faces/search` with JSON (`image_base64`, optional `limit` / `min_score` / liveness knobs) → top-K similar `face_id`s and scores.
-4. **Groups rebuild** — `POST /v1/faces/groups/rebuild` → starts an async ANN-graph job (`202` + `run_id`). List runs with `GET /v1/faces/groups/rebuild` (newest `started_at` first) or poll `GET /v1/faces/groups/rebuild/{run_id}` until `completed`. Concurrent rebuilds return `409`.
-5. **Groups** — `GET /v1/faces/groups` → reads the latest **completed** run from Postgres (not on-demand O(n²)). Empty if no rebuild has finished yet.
-6. **Verify** — `POST /v1/faces/{face_id}/verify` with JSON (`image_base64`, optional `match_threshold` / liveness knobs) → `match` and `score` vs threshold.
-7. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`; verify/search should no longer find that id (`404` or absent from results).
-8. **Clear all** — `DELETE /v1/faces` → wipes every embedding (`deleted_count`); use only from a trusted backend (no auth in MVP). Group tables in Postgres are unchanged until the next rebuild.
-9. **Count / list / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces?limit=&offset=`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no vectors returned).
+1. **Enroll** — `POST /v1/faces` JSON (`image_base64` + optional knobs) → save `face_id`. `"liveness": true` runs MiniFASNet first.
+2. **Update** — `PUT /v1/faces/{face_id}` same JSON shape → `"updated": true`.
+3. **Search** — `POST /v1/faces/search` JSON (`image_base64`, optional `limit` / `min_score` / liveness knobs).
+4. **List faces** — `POST /v1/faces/list` JSON (`limit`, `offset` optional).
+5. **Groups rebuild** — `POST /v1/faces/groups/rebuild` JSON (`min_score`, `min_size`, `top_k` optional) → `202` + `run_id`. Poll `GET /v1/faces/groups/rebuild/{run_id}` or list runs with `GET /v1/faces/groups/rebuild`. Concurrent rebuilds → `409`.
+6. **Groups** — `POST /v1/faces/groups/list` JSON (`min_size` optional) → latest **completed** Postgres snapshot.
+7. **Verify** — `POST /v1/faces/{face_id}/verify` JSON (`image_base64`, optional `match_threshold` / liveness knobs).
+8. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`.
+9. **Clear all** — `DELETE /v1/faces` → wipe embeddings (`deleted_count`).
+10. **Count / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no body).
 
-Image endpoints use **`application/json`** (Swagger Request body like a normal login API). Required: `image_base64` (raw base64 or `data:image/...;base64,...`). Optional: `liveness` (default `false`), `blur_min_variance`, `brightness_min`, `brightness_max`, `min_side_px`, `liveness_threshold`; verify also `match_threshold`; search also `limit` / `min_score`. Omit a key → env default. Full override — clients may relax or disable checks (same disable values as env).
+Mutating / query endpoints that take client options use **`application/json`** Request bodies (Swagger like Login). Image endpoints require `image_base64`; optional knobs: `liveness`, quality thresholds, `liveness_threshold`, verify `match_threshold`, search `limit`/`min_score`. Omit a key → env default.
 
 Liveness is **off by default**. When `liveness` is `true`, the service detects the face first, runs **face quality** checks, then crops with `LIVENESS_CROP_SCALE` (Silent-Face 2.7) and runs MiniFASNet. Quality or spoof fail → `422` (distinct messages); if the ONNX model is missing → `503`.
 
@@ -115,7 +116,7 @@ Optional: enroll a second photo of the same person, then **rebuild groups** or *
 | `QDRANT_COLLECTION` | Collection name | `faces` |
 | `DATABASE_URL` | SQLAlchemy URL for group runs (host Postgres) | See `.env` / `.env.example` (`imfaceid` @ `localhost` or `host.docker.internal`) |
 | `FACE_MATCH_THRESHOLD` | Default 1:1 verify cutoff (JSON `match_threshold` overrides) | `0.40` |
-| `FACE_SEARCH_MIN_SCORE` | Default min score for search / group rebuild (JSON `min_score` on search; Query on rebuild) | `0.40` |
+| `FACE_SEARCH_MIN_SCORE` | Default min score for search / group rebuild (JSON `min_score` overrides) | `0.40` |
 | `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |
 | `FACE_SEARCH_MAX_LIMIT` | Maximum search limit | `20` |
 | `FACE_GROUPS_MIN_SIZE` | Default minimum group size | `2` |

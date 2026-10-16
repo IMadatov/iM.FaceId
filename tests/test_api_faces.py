@@ -105,7 +105,7 @@ def test_clear_all_faces():
     assert body["cleared"] is True
     assert body["deleted_count"] == 2
 
-    assert c.get("/v1/faces/groups").json()["groups"] == []
+    assert c.post("/v1/faces/groups/list", json={}).json()["groups"] == []
     assert c.delete(f"/v1/faces/{id_a}").status_code == 404
     assert c.delete(f"/v1/faces/{id_b}").status_code == 404
 
@@ -129,7 +129,7 @@ def test_count_list_get_stats():
     id_a, id_b = r1.json()["face_id"], r2.json()["face_id"]
 
     assert c.get("/v1/faces/count").json()["count"] == 2
-    listed = c.get("/v1/faces", params={"limit": 1, "offset": 0})
+    listed = c.post("/v1/faces/list", json={"limit": 1, "offset": 0})
     assert listed.status_code == 200
     body = listed.json()
     assert body["total"] == 2
@@ -247,9 +247,11 @@ def test_groups_clusters_similar_enrollments():
     assert r1.status_code == r2.status_code == r3.status_code == 201
     id_a, id_b, id_c = r1.json()["face_id"], r2.json()["face_id"], r3.json()["face_id"]
 
-    assert c.get("/v1/faces/groups").json()["groups"] == []
+    assert c.post("/v1/faces/groups/list", json={}).json()["groups"] == []
 
-    started = c.post("/v1/faces/groups/rebuild", params={"min_score": 0.99})
+    started = c.post(
+        "/v1/faces/groups/rebuild", json={"min_score": 0.99}
+    )
     assert started.status_code == 202
     run_id = started.json()["run_id"]
 
@@ -257,7 +259,7 @@ def test_groups_clusters_similar_enrollments():
     assert status.status_code == 200
     assert status.json()["status"] == "completed"
 
-    r = c.get("/v1/faces/groups")
+    r = c.post("/v1/faces/groups/list", json={})
     assert r.status_code == 200
     body = r.json()
     assert body["threshold"] == 0.99
@@ -273,10 +275,14 @@ def test_groups_rebuild_list_sorted_by_started_at_desc():
     c = _client()
     assert c.get("/v1/faces/groups/rebuild").json() == {"runs": []}
 
-    first = c.post("/v1/faces/groups/rebuild", params={"min_score": 0.99})
+    first = c.post(
+        "/v1/faces/groups/rebuild", json={"min_score": 0.99}
+    )
     assert first.status_code == 202
     first_id = first.json()["run_id"]
-    second = c.post("/v1/faces/groups/rebuild", params={"min_score": 0.98})
+    second = c.post(
+        "/v1/faces/groups/rebuild", json={"min_score": 0.98}
+    )
     assert second.status_code == 202
     second_id = second.json()["run_id"]
 
@@ -292,9 +298,9 @@ def test_groups_rebuild_list_sorted_by_started_at_desc():
 
 def test_groups_rejects_min_size_below_two():
     c = _client()
-    r = c.get("/v1/faces/groups", params={"min_size": 1})
+    r = c.post("/v1/faces/groups/list", json={"min_size": 1})
     assert r.status_code == 400
-    r2 = c.post("/v1/faces/groups/rebuild", params={"min_size": 1})
+    r2 = c.post("/v1/faces/groups/rebuild", json={"min_size": 1})
     assert r2.status_code == 400
 
 
@@ -306,7 +312,7 @@ def test_groups_rebuild_conflict_when_locked():
     assert service._lock.acquire(blocking=False)
     try:
         c = TestClient(app)
-        r = c.post("/v1/faces/groups/rebuild")
+        r = c.post("/v1/faces/groups/rebuild", json={})
         assert r.status_code == 409
     finally:
         service._lock.release()

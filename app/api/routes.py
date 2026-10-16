@@ -1,7 +1,7 @@
 import base64
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.api.schemas import (
     ClearResponse,
@@ -11,12 +11,15 @@ from app.api.schemas import (
     FaceGroup,
     FaceIdResponse,
     FaceImageRequest,
+    FaceListRequest,
     FaceListResponse,
     FaceSearchRequest,
     FaceVerifyRequest,
     GroupRebuildAccepted,
     GroupRebuildListResponse,
+    GroupRebuildRequest,
     GroupRebuildStatus,
+    GroupsListRequest,
     GroupsResponse,
     HealthResponse,
     SearchHit,
@@ -160,20 +163,19 @@ def count_faces(store=Depends(store_dep)) -> CountResponse:
     return CountResponse(count=store.count())
 
 
-@router.get("/v1/faces", response_model=FaceListResponse)
+@router.post("/v1/faces/list", response_model=FaceListResponse)
 def list_faces(
-    limit: int | None = Query(default=None),
-    offset: int = Query(default=0, ge=0),
+    body: FaceListRequest,
     settings: Settings = Depends(settings_dep),
     store=Depends(store_dep),
 ) -> FaceListResponse:
-    effective = settings.face_list_default_limit if limit is None else limit
+    effective = settings.face_list_default_limit if body.limit is None else body.limit
     effective = max(1, min(effective, settings.face_list_max_limit))
     return FaceListResponse(
-        face_ids=store.list_ids(limit=effective, offset=offset),
+        face_ids=store.list_ids(limit=effective, offset=body.offset),
         total=store.count(),
         limit=effective,
-        offset=offset,
+        offset=body.offset,
     )
 
 
@@ -194,10 +196,8 @@ def stats(
     status_code=202,
 )
 def rebuild_face_groups(
+    body: GroupRebuildRequest,
     background_tasks: BackgroundTasks,
-    min_score: float | None = Query(default=None),
-    min_size: int | None = Query(default=None),
-    top_k: int | None = Query(default=None, ge=1),
     settings: Settings = Depends(settings_dep),
     store=Depends(store_dep),
     rebuild: GroupRebuildService = Depends(group_rebuild_dep),
@@ -206,9 +206,9 @@ def rebuild_face_groups(
         run_id = rebuild.start(
             store=store,
             settings=settings,
-            min_score=min_score,
-            min_size=min_size,
-            top_k=top_k,
+            min_score=body.min_score,
+            min_size=body.min_size,
+            top_k=body.top_k,
         )
     except GroupRebuildConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -266,13 +266,13 @@ def get_group_rebuild_status(
         session.close()
 
 
-@router.get("/v1/faces/groups", response_model=GroupsResponse)
+@router.post("/v1/faces/groups/list", response_model=GroupsResponse)
 def list_face_groups(
-    min_size: int | None = Query(default=None),
+    body: GroupsListRequest,
     settings: Settings = Depends(settings_dep),
     session_factory=Depends(session_factory_dep),
 ) -> GroupsResponse:
-    size = settings.face_groups_min_size if min_size is None else min_size
+    size = settings.face_groups_min_size if body.min_size is None else body.min_size
     if size < 2:
         raise HTTPException(status_code=400, detail="min_size must be >= 2")
     session = session_factory()
