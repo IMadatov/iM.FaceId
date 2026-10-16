@@ -7,7 +7,7 @@ import numpy as np
 from app.matching.cosine import cosine_similarity
 
 
-class _UnionFind:
+class UnionFind:
     def __init__(self, n: int) -> None:
         self.parent = list(range(n))
         self.rank = [0] * n
@@ -31,6 +31,19 @@ class _UnionFind:
             self.rank[ri] += 1
 
 
+def components_from_union_find(
+    ids: list[str], uf: UnionFind, *, min_size: int
+) -> list[list[str]]:
+    buckets: dict[int, list[str]] = {}
+    for i, face_id in enumerate(ids):
+        root = uf.find(i)
+        buckets.setdefault(root, []).append(face_id)
+
+    groups = [members for members in buckets.values() if len(members) >= min_size]
+    groups.sort(key=lambda g: (-len(g), g[0]))
+    return groups
+
+
 def group_similar_faces(
     items: list[tuple[str, np.ndarray]],
     *,
@@ -48,18 +61,11 @@ def group_similar_faces(
     ids = [face_id for face_id, _ in items]
     vectors = [vec.astype(np.float32, copy=False).reshape(-1) for _, vec in items]
     n = len(ids)
-    uf = _UnionFind(n)
+    uf = UnionFind(n)
 
     for i in range(n):
         for j in range(i + 1, n):
             if cosine_similarity(vectors[i], vectors[j]) >= min_score:
                 uf.union(i, j)
 
-    buckets: dict[int, list[str]] = {}
-    for i, face_id in enumerate(ids):
-        root = uf.find(i)
-        buckets.setdefault(root, []).append(face_id)
-
-    groups = [members for members in buckets.values() if len(members) >= min_size]
-    groups.sort(key=lambda g: (-len(g), g[0]))
-    return groups
+    return components_from_union_find(ids, uf, min_size=min_size)

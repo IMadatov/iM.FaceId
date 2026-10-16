@@ -2,6 +2,7 @@ from fastapi import Request
 
 from app.config import Settings, get_settings
 from app.errors import DependencyUnavailableError
+from app.jobs.group_rebuild import GroupRebuildService
 
 
 def settings_dep() -> Settings:
@@ -27,3 +28,17 @@ def liveness_dep(request: Request):
     if checker is None:
         raise DependencyUnavailableError("liveness checker not configured")
     return checker
+
+
+def session_factory_dep(request: Request):
+    factory = getattr(request.app.state, "session_factory", None)
+    if factory is None:
+        raise DependencyUnavailableError("database not configured")
+    return factory
+
+
+def group_rebuild_dep(request: Request) -> GroupRebuildService:
+    service = getattr(request.app.state, "group_rebuild", None)
+    if service is None:
+        raise DependencyUnavailableError("group rebuild service not configured")
+    return service

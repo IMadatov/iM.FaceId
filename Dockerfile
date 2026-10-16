@@ -11,15 +11,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY scripts ./scripts
-
+# Download models in their own layer (before app code) so code edits do not re-download.
 ENV MODEL_DIR=/app/models \
     LIVENESS_MODEL_PATH=/app/models/liveness/minifasnet_v2.onnx \
     PYTHONUNBUFFERED=1
 
+COPY scripts/download_models.py scripts/download_liveness_model.py ./scripts/
 RUN python scripts/download_models.py \
     && python scripts/download_liveness_model.py
+
+COPY app ./app
+COPY scripts ./scripts
 
 EXPOSE 8000
 

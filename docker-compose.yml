@@ -10,10 +10,11 @@ services:
     cpus: "1.0"
     mem_limit: 2g
     healthcheck:
+      # Qdrant image bash has no /dev/tcp and no curl; check listening port 6333 (0x18BD).
       test:
         [
           "CMD-SHELL",
-          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'",
+          "grep -qE '[:.]18BD[[:space:]]' /proc/net/tcp /proc/net/tcp6 2>/dev/null",
         ]
       interval: 5s
       timeout: 3s
@@ -24,6 +25,10 @@ services:
     build: .
     ports:
       - "8000:8000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: faces
@@ -33,7 +38,7 @@ services:
       qdrant:
         condition: service_healthy
     restart: unless-stopped
-    cpus: "2.0"
+    cpus: "4.0"
     mem_limit: 4g
 
 volumes:

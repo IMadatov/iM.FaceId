@@ -18,5 +18,9 @@ class LivenessFailedError(Exception):
     """Image failed anti-spoof / liveness check."""
 
 
+class ImageQualityError(Exception):
+    """Face crop failed blur / brightness / size quality checks."""
+
+
 class DependencyUnavailableError(Exception):
     """Model or Qdrant unavailable."""

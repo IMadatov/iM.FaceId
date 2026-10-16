@@ -17,17 +17,27 @@ def test_dockerfile_bakes_models_and_runs_uvicorn():
     assert "uvicorn" in text
     assert "0.0.0.0" in text
     assert "8000" in text
+    # Models must be downloaded before COPY app so code edits keep the model layer cached.
+    download_at = text.index("download_models.py")
+    copy_app_at = text.index("COPY app")
+    assert download_at < copy_app_at
 
 
 def test_compose_api_and_qdrant_limits_and_env():
     text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     assert "api:" in text
     assert "qdrant:" in text
+    assert "postgres:" not in text
+    assert "postgres_data:" not in text
     assert "mem_limit: 4g" in text
-    assert 'cpus: "2.0"' in text or "cpus: '2.0'" in text
+    assert 'cpus: "4.0"' in text or "cpus: '4.0'" in text
     assert "mem_limit: 2g" in text
     assert 'cpus: "1.0"' in text or "cpus: '1.0'" in text
     assert "QDRANT_URL=http://qdrant:6333" in text or "QDRANT_URL: http://qdrant:6333" in text
+    assert "env_file:" in text
+    assert ".env" in text
+    assert "host.docker.internal:host-gateway" in text
+    assert "DATABASE_URL:" not in text  # comes from .env (host Postgres)
     assert "MODEL_DIR=/app/models" in text or "MODEL_DIR: /app/models" in text
     assert "LIVENESS_MODEL_PATH=/app/models/liveness/minifasnet_v2.onnx" in text or (
         "LIVENESS_MODEL_PATH: /app/models/liveness/minifasnet_v2.onnx" in text

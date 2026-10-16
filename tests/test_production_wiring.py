@@ -35,8 +35,15 @@ def test_production_attaches_pipeline_and_store(monkeypatch):
         "app.pipeline.onnx_liveness.load_liveness_checker",
         lambda *args, **kwargs: sentinel_live,
     )
+    def fake_wire(app, database_url):
+        app.state.session_factory = object()
+        app.state.group_rebuild = object()
+
+    monkeypatch.setattr("app.main._wire_database", fake_wire)
     app = create_app(testing=False)
     with TestClient(app):
         assert app.state.pipeline is sentinel_pipe
         assert app.state.store is sentinel_store
         assert app.state.liveness is sentinel_live
+        assert app.state.session_factory is not None
+        assert app.state.group_rebuild is not None
