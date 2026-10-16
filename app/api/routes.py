@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import ValidationError
 
 from app.api.schemas import (
     ClearResponse,
@@ -10,6 +11,7 @@ from app.api.schemas import (
     FaceGroup,
     FaceIdResponse,
     FaceListResponse,
+    FaceRequestOptions,
     GroupRebuildAccepted,
     GroupRebuildListResponse,
     GroupRebuildStatus,
@@ -55,6 +57,15 @@ async def _decode_upload(image: UploadFile, settings: Settings):
 
 def _resolve(client: float | None, default: float) -> float:
     return default if client is None else client
+
+
+def _parse_options(options: str | None) -> FaceRequestOptions:
+    if options is None or not options.strip():
+        return FaceRequestOptions()
+    try:
+        return FaceRequestOptions.model_validate_json(options)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid options: {exc}") from exc
 
 
 def _maybe_face_quality(
@@ -103,16 +114,13 @@ def health(
 async def enroll_face(
     image: UploadFile = File(...),
     liveness: bool = Form(False),
-    blur_min_variance: float | None = Form(None),
-    brightness_min: float | None = Form(None),
-    brightness_max: float | None = Form(None),
-    min_side_px: float | None = Form(None),
-    liveness_threshold: float | None = Form(None),
+    options: str | None = Form(None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
     checker=Depends(liveness_dep),
 ) -> FaceIdResponse:
+    opts = _parse_options(options)
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
     _maybe_face_quality(
@@ -120,17 +128,17 @@ async def enroll_face(
         liveness=liveness,
         bbox=detected.bbox,
         blur_min_variance=_resolve(
-            blur_min_variance, settings.face_blur_min_variance
+            opts.blur_min_variance, settings.face_blur_min_variance
         ),
-        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
     )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
         checker=checker,
-        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
+        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     face_id = str(uuid.uuid4())
@@ -294,11 +302,7 @@ def list_face_groups(
 async def search_faces(
     image: UploadFile = File(...),
     liveness: bool = Form(False),
-    blur_min_variance: float | None = Form(None),
-    brightness_min: float | None = Form(None),
-    brightness_max: float | None = Form(None),
-    min_side_px: float | None = Form(None),
-    liveness_threshold: float | None = Form(None),
+    options: str | None = Form(None),
     limit: int | None = Query(default=None),
     min_score: float | None = Query(default=None),
     settings: Settings = Depends(settings_dep),
@@ -306,6 +310,7 @@ async def search_faces(
     store=Depends(store_dep),
     checker=Depends(liveness_dep),
 ) -> SearchResponse:
+    opts = _parse_options(options)
     effective_limit = settings.face_search_default_limit if limit is None else limit
     effective_limit = max(1, min(effective_limit, settings.face_search_max_limit))
     threshold = settings.face_search_min_score if min_score is None else min_score
@@ -316,17 +321,17 @@ async def search_faces(
         liveness=liveness,
         bbox=detected.bbox,
         blur_min_variance=_resolve(
-            blur_min_variance, settings.face_blur_min_variance
+            opts.blur_min_variance, settings.face_blur_min_variance
         ),
-        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
     )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
         checker=checker,
-        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
+        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     hits = store.search(
@@ -344,11 +349,7 @@ async def update_face(
     face_id: str,
     image: UploadFile = File(...),
     liveness: bool = Form(False),
-    blur_min_variance: float | None = Form(None),
-    brightness_min: float | None = Form(None),
-    brightness_max: float | None = Form(None),
-    min_side_px: float | None = Form(None),
-    liveness_threshold: float | None = Form(None),
+    options: str | None = Form(None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -356,6 +357,7 @@ async def update_face(
 ) -> UpdateResponse:
     if store.get(face_id) is None:
         raise FaceNotFoundError(f"face {face_id} not found")
+    opts = _parse_options(options)
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
     _maybe_face_quality(
@@ -363,17 +365,17 @@ async def update_face(
         liveness=liveness,
         bbox=detected.bbox,
         blur_min_variance=_resolve(
-            blur_min_variance, settings.face_blur_min_variance
+            opts.blur_min_variance, settings.face_blur_min_variance
         ),
-        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
     )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
         checker=checker,
-        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
+        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     store.upsert(face_id, detected.embedding)
@@ -399,12 +401,7 @@ async def verify_face(
     face_id: str,
     image: UploadFile = File(...),
     liveness: bool = Form(False),
-    blur_min_variance: float | None = Form(None),
-    brightness_min: float | None = Form(None),
-    brightness_max: float | None = Form(None),
-    min_side_px: float | None = Form(None),
-    liveness_threshold: float | None = Form(None),
-    match_threshold: float | None = Form(None),
+    options: str | None = Form(None),
     settings: Settings = Depends(settings_dep),
     pipeline=Depends(pipeline_dep),
     store=Depends(store_dep),
@@ -413,6 +410,7 @@ async def verify_face(
     stored = store.get(face_id)
     if stored is None:
         raise FaceNotFoundError(f"face {face_id} not found")
+    opts = _parse_options(options)
     img = await _decode_upload(image, settings)
     detected = pipeline.detect_bgr(img)
     _maybe_face_quality(
@@ -420,21 +418,21 @@ async def verify_face(
         liveness=liveness,
         bbox=detected.bbox,
         blur_min_variance=_resolve(
-            blur_min_variance, settings.face_blur_min_variance
+            opts.blur_min_variance, settings.face_blur_min_variance
         ),
-        brightness_min=_resolve(brightness_min, settings.face_brightness_min),
-        brightness_max=_resolve(brightness_max, settings.face_brightness_max),
-        min_side_px=_resolve(min_side_px, settings.face_min_side_px),
+        brightness_min=_resolve(opts.brightness_min, settings.face_brightness_min),
+        brightness_max=_resolve(opts.brightness_max, settings.face_brightness_max),
+        min_side_px=_resolve(opts.min_side_px, settings.face_min_side_px),
     )
     live_score = _maybe_liveness(
         img,
         liveness=liveness,
         checker=checker,
-        threshold=_resolve(liveness_threshold, settings.liveness_threshold),
+        threshold=_resolve(opts.liveness_threshold, settings.liveness_threshold),
         bbox=detected.bbox,
     )
     score = cosine_similarity(stored, detected.embedding)
-    threshold = _resolve(match_threshold, settings.face_match_threshold)
+    threshold = _resolve(opts.match_threshold, settings.face_match_threshold)
     return VerifyResponse(
         face_id=face_id,
         match=is_match(score, threshold),

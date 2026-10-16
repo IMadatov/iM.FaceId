@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import cv2
 from fastapi.testclient import TestClient
@@ -422,7 +424,7 @@ def test_enroll_sharp_with_liveness_passes_quality():
 
 
 def test_enroll_client_blur_override_stricter_422():
-    """Server blur disabled; client Form requires blur → quality 422."""
+    """Server blur disabled; client options JSON requires blur → quality 422."""
     app = create_app(testing=True)
     app.state.pipeline = FakeFacePipeline()
     app.state.store = MemoryFaceStore()
@@ -437,7 +439,10 @@ def test_enroll_client_blur_override_stricter_422():
     r = c.post(
         "/v1/faces",
         files={"image": ("a.png", _blurry_img_bytes(120), "image/png")},
-        data={"liveness": "true", "blur_min_variance": "50"},
+        data={
+            "liveness": "true",
+            "options": json.dumps({"blur_min_variance": 50}),
+        },
     )
     assert r.status_code == 422
     detail = r.json()["detail"].lower()
@@ -458,7 +463,7 @@ def test_verify_client_match_threshold():
     r = c.post(
         f"/v1/faces/{face_id}/verify",
         files={"image": ("b.png", _img_bytes(120), "image/png")},
-        data={"match_threshold": "0.0"},
+        data={"options": json.dumps({"match_threshold": 0.0})},
     )
     assert r.status_code == 200
     body = r.json()
@@ -485,10 +490,24 @@ def test_enroll_client_liveness_threshold_stricter_422():
     r = c.post(
         "/v1/faces",
         files={"image": ("a.png", _img_bytes(120), "image/png")},
-        data={"liveness": "true", "liveness_threshold": "0.90"},
+        data={
+            "liveness": "true",
+            "options": json.dumps({"liveness_threshold": 0.90}),
+        },
     )
     assert r.status_code == 422
     assert "liveness" in r.json()["detail"].lower()
+
+
+def test_enroll_invalid_options_json_422():
+    c = _client()
+    r = c.post(
+        "/v1/faces",
+        files={"image": ("a.png", _img_bytes(120), "image/png")},
+        data={"options": "{not-json"},
+    )
+    assert r.status_code == 422
+    assert "options" in str(r.json()["detail"]).lower()
 
 
 def test_groups_rebuild_status_not_found():

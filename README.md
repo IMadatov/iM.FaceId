@@ -96,7 +96,13 @@ Use **Try it out** on each endpoint in order:
 
 Liveness is **off by default**. When `liveness=true`, the service detects the face first, runs **face quality** checks (blur / brightness / min face size — defaults via env, overridable per request), then crops with `LIVENESS_CROP_SCALE` (Silent-Face 2.7) and runs MiniFASNet. Quality or spoof fail → `422` (distinct messages); if the ONNX model is missing → `503`.
 
-Optional Form overrides (omit → env defaults): `blur_min_variance`, `brightness_min`, `brightness_max`, `min_side_px`, `liveness_threshold` on enroll/update/search/verify; `match_threshold` on verify. Search score still uses Query `min_score`. Full override — clients may relax or disable checks (same disable values as env).
+Optional Form field `options` — a JSON object (omit → env defaults). Keys: `blur_min_variance`, `brightness_min`, `brightness_max`, `min_side_px`, `liveness_threshold` on enroll/update/search/verify; `match_threshold` on verify only. Search score still uses Query `min_score`. `liveness` stays a separate Form bool. Full override — clients may relax or disable checks (same disable values as env).
+
+```bash
+curl -F image=@face.png -F liveness=true \
+  -F 'options={"blur_min_variance":80,"liveness_threshold":0.7}' \
+  http://localhost:8000/v1/faces
+```
 
 Optional: enroll a second photo of the same person, then **rebuild groups** or **Search** — both ids should appear together (fraud signal).
 
@@ -107,7 +113,7 @@ Optional: enroll a second photo of the same person, then **rebuild groups** or *
 | `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` (Compose: `http://qdrant:6333`) |
 | `QDRANT_COLLECTION` | Collection name | `faces` |
 | `DATABASE_URL` | SQLAlchemy URL for group runs (host Postgres) | See `.env` / `.env.example` (`imfaceid` @ `localhost` or `host.docker.internal`) |
-| `FACE_MATCH_THRESHOLD` | Default 1:1 verify cutoff (Form `match_threshold` overrides) | `0.40` |
+| `FACE_MATCH_THRESHOLD` | Default 1:1 verify cutoff (`options.match_threshold` overrides) | `0.40` |
 | `FACE_SEARCH_MIN_SCORE` | Default min score for search / group rebuild (Query `min_score` overrides) | `0.40` |
 | `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |
 | `FACE_SEARCH_MAX_LIMIT` | Maximum search limit | `20` |
@@ -119,12 +125,12 @@ Optional: enroll a second photo of the same person, then **rebuild groups** or *
 | `FACE_LIST_MAX_LIMIT` | Max page size for face id listing | `1000` |
 | `MODEL_DIR` | ONNX / InsightFace weights directory | `./models` (Compose image: `/app/models`) |
 | `LIVENESS_MODEL_PATH` | MiniFASNet-V2 ONNX path | `./models/liveness/minifasnet_v2.onnx` (Compose: `/app/models/liveness/minifasnet_v2.onnx`) |
-| `LIVENESS_THRESHOLD` | Default min live-class probability (Form `liveness_threshold` overrides) | `0.50` |
+| `LIVENESS_THRESHOLD` | Default min live-class probability (`options.liveness_threshold` overrides) | `0.50` |
 | `LIVENESS_CROP_SCALE` | Face crop expansion for MiniFASNet | `2.7` |
-| `FACE_BLUR_MIN_VARIANCE` | Default min Laplacian variance (`liveness=true`); Form override; `0` disables | `50` |
-| `FACE_BRIGHTNESS_MIN` | Default min mean gray; Form override; `0` disables low check | `40` |
-| `FACE_BRIGHTNESS_MAX` | Default max mean gray; Form override; `255` disables high check | `220` |
-| `FACE_MIN_SIDE_PX` | Default min face bbox side in px; Form override; `0` disables | `80` |
+| `FACE_BLUR_MIN_VARIANCE` | Default min Laplacian variance (`liveness=true`); `options` override; `0` disables | `50` |
+| `FACE_BRIGHTNESS_MIN` | Default min mean gray; `options` override; `0` disables low check | `40` |
+| `FACE_BRIGHTNESS_MAX` | Default max mean gray; `options` override; `255` disables high check | `220` |
+| `FACE_MIN_SIDE_PX` | Default min face bbox side in px; `options` override; `0` disables | `80` |
 | `MAX_IMAGE_SIDE` | Max image side after resize | `640` |
 | `MAX_UPLOAD_BYTES` | Upload size limit (bytes) | `5000000` |
 
