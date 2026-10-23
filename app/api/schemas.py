@@ -53,6 +53,12 @@ class FaceIdResponse(BaseModel):
     face_id: str
     liveness_score: float | None = None
 
+
+class CheckResponse(BaseModel):
+    ok: bool = True
+    liveness_score: float | None = None
+
+
 class UpdateResponse(BaseModel):
     face_id: str
     updated: bool = True

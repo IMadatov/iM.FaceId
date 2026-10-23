@@ -508,3 +508,86 @@ def test_groups_rebuild_status_not_found():
     c = _client()
     r = c.get("/v1/faces/groups/rebuild/00000000-0000-0000-0000-000000000000")
     assert r.status_code == 404
+
+
+def test_check_face_ok_does_not_store():
+    c = _client()
+    assert c.get("/v1/faces/count").json()["count"] == 0
+    r = c.post("/v1/faces/check", json=_face_json(_img_bytes(120)))
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"ok": True, "liveness_score": None}
+    assert "face_id" not in body
+    assert "embedding" not in body
+    assert c.get("/v1/faces/count").json()["count"] == 0
+
+
+def test_check_face_liveness_pass_returns_score():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/check",
+        json=_face_json(_img_bytes(120), liveness=True),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["liveness_score"] is not None
+    assert body["liveness_score"] >= 0.5
+    assert c.get("/v1/faces/count").json()["count"] == 0
+
+
+def test_check_face_blurry_with_liveness_quality_422():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=50.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/check",
+        json=_face_json(_blurry_img_bytes(120), liveness=True),
+    )
+    assert r.status_code == 422
+    detail = r.json()["detail"].lower()
+    assert "quality" in detail or "blur" in detail
+    assert "liveness" not in detail
+    assert c.get("/v1/faces/count").json()["count"] == 0
+
+
+def test_check_face_liveness_fail_422():
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+    )
+    from app.pipeline.fake_liveness import FakeLivenessChecker
+
+    app.state.liveness = FakeLivenessChecker(force_spoof=True)
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/check",
+        json=_face_json(_img_bytes(120), liveness=True),
+    )
+    assert r.status_code == 422
+    assert "liveness" in r.json()["detail"].lower()
+    assert c.get("/v1/faces/count").json()["count"] == 0

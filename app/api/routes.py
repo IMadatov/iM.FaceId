@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.api.schemas import (
+    CheckResponse,
     ClearResponse,
     CountResponse,
     DeleteResponse,
@@ -149,6 +150,22 @@ def enroll_face(
     face_id = str(uuid.uuid4())
     store.upsert(face_id, detected.embedding)
     return FaceIdResponse(face_id=face_id, liveness_score=live_score)
+
+
+@router.post("/v1/faces/check", response_model=CheckResponse)
+def check_face(
+    body: FaceImageRequest,
+    settings: Settings = Depends(settings_dep),
+    pipeline=Depends(pipeline_dep),
+    checker=Depends(liveness_dep),
+) -> CheckResponse:
+    """Preflight: same gates as enroll, no store write."""
+    img = _decode_base64_image(body.image_base64, settings)
+    detected = pipeline.detect_bgr(img)
+    live_score = _run_quality_and_liveness(
+        img, detected, body, settings, checker
+    )
+    return CheckResponse(ok=True, liveness_score=live_score)
 
 
 @router.delete("/v1/faces", response_model=ClearResponse)
