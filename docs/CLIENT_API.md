@@ -135,6 +135,38 @@ curl -s -X POST "$BASE/v1/faces" \
 
 ---
 
+### `POST /v1/faces/check` — Preflight check
+
+Same image gates as enroll (decode, detect, optional quality/liveness). Does **not** store a face and does **not** return an embedding.
+
+**Request**
+
+Same body as enroll.
+
+**Response 200**
+
+```json
+{
+  "ok": true,
+  "liveness_score": null
+}
+```
+
+`liveness_score` is set only when `liveness` was `true`.
+
+**curl**
+
+```bash
+IMG=$(base64 -w0 face.png)
+curl -s -X POST "$BASE/v1/faces/check" \
+  -H 'Content-Type: application/json' \
+  -d "{\"image_base64\":\"$IMG\",\"liveness\":true}"
+```
+
+Errors match enroll for the shared pipeline (invalid image, no face, quality, liveness).
+
+---
+
 ### `PUT /v1/faces/{face_id}` — Update
 
 Replace embedding for an existing face. Same body as enroll.
