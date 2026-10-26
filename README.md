@@ -94,9 +94,9 @@ Use **Try it out** on each endpoint in order:
 6. **Groups** — `POST /v1/faces/groups/list` JSON (`min_size` optional) → latest **completed** Postgres snapshot.
 7. **Liveness** — `POST /v1/faces/liveness` JSON (`images_base64`, optional quality / liveness knobs) → multi-frame passive liveness; rejects static photo/screen.
 8. **Verify** — `POST /v1/faces/{face_id}/verify` JSON (`image_base64`, optional `match_threshold` / liveness knobs).
-8. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`.
-9. **Clear all** — `DELETE /v1/faces` → wipe embeddings (`deleted_count`).
-10. **Count / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no body).
+9. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`.
+10. **Clear all** — `DELETE /v1/faces` → wipe embeddings (`deleted_count`).
+11. **Count / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no body).
 
 Mutating / query endpoints that take client options use **`application/json`** Request bodies (Swagger like Login). Image endpoints require `image_base64`; optional knobs: `liveness`, quality thresholds, `liveness_threshold`, verify `match_threshold`, search `limit`/`min_score`. Omit a key → env default.
 
