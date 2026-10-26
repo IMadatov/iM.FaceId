@@ -14,6 +14,7 @@ from app.api.schemas import (
     FaceImageRequest,
     FaceListRequest,
     FaceListResponse,
+    FaceLivenessRequest,
     FaceSearchRequest,
     FaceVerifyRequest,
     GroupRebuildAccepted,
@@ -23,6 +24,7 @@ from app.api.schemas import (
     GroupsListRequest,
     GroupsResponse,
     HealthResponse,
+    LivenessResponse,
     SearchHit,
     SearchResponse,
     StatsResponse,
@@ -39,10 +41,16 @@ from app.deps import (
     settings_dep,
     store_dep,
 )
-from app.errors import DependencyUnavailableError, FaceNotFoundError, InvalidImageError
+from app.errors import (
+    DependencyUnavailableError,
+    FaceDetectionError,
+    FaceNotFoundError,
+    InvalidImageError,
+    LivenessFailedError,
+)
 from app.imaging import decode_and_resize
 from app.jobs.group_rebuild import GroupRebuildConflict, GroupRebuildService
-from app.matching.cosine import cosine_similarity, is_match
+from app.matching.cosine import cosine_distance, cosine_similarity, is_match
 from app.pipeline.image_quality import ensure_face_quality
 
 router = APIRouter()
@@ -166,6 +174,90 @@ def check_face(
         img, detected, body, settings, checker
     )
     return CheckResponse(ok=True, liveness_score=live_score)
+
+
+def _run_multiframe_liveness(images_base64, body, settings, pipeline, checker):
+    if not checker.ready():
+        raise DependencyUnavailableError(
+            "liveness model not available "
+            "(run scripts/download_liveness_model.py)"
+        )
+    if len(images_base64) > settings.liveness_max_frames:
+        raise HTTPException(
+            status_code=422,
+            detail=f"too many frames (max {settings.liveness_max_frames})",
+        )
+    blur_min_variance = _resolve(
+        body.blur_min_variance, settings.face_blur_min_variance
+    )
+    brightness_min = _resolve(body.brightness_min, settings.face_brightness_min)
+    brightness_max = _resolve(body.brightness_max, settings.face_brightness_max)
+    min_side_px = _resolve(body.min_side_px, settings.face_min_side_px)
+    threshold = _resolve(body.liveness_threshold, settings.liveness_threshold)
+    min_distance = _resolve(
+        body.liveness_min_distance, settings.liveness_min_distance
+    )
+
+    scores: list[float] = []
+    embeddings = []
+    for index, image_base64 in enumerate(images_base64):
+        try:
+            img = _decode_base64_image(image_base64, settings)
+        except InvalidImageError as exc:
+            raise InvalidImageError(f"frame[{index}]: {exc}") from exc
+        try:
+            detected = pipeline.detect_bgr(img)
+        except FaceDetectionError as exc:
+            raise FaceDetectionError(
+                f"frame[{index}]: {exc}", code=exc.code
+            ) from exc
+        ensure_face_quality(
+            img,
+            detected.bbox,
+            blur_min_variance=blur_min_variance,
+            brightness_min=brightness_min,
+            brightness_max=brightness_max,
+            min_side_px=min_side_px,
+        )
+        scores.append(checker.score_bgr(img, bbox=detected.bbox))
+        embeddings.append(detected.embedding)
+
+    mean_score = float(sum(scores) / len(scores))
+    max_distance = max(
+        cosine_distance(embeddings[i], embeddings[j])
+        for i in range(len(embeddings))
+        for j in range(i + 1, len(embeddings))
+    )
+    if mean_score < threshold:
+        raise LivenessFailedError(
+            f"liveness check failed (mean score={mean_score:.4f} "
+            f"< {threshold:.4f})"
+        )
+    if max_distance < min_distance:
+        raise LivenessFailedError(
+            f"liveness check failed (frames too similar: "
+            f"distance={max_distance:.4f} < {min_distance:.4f})"
+        )
+    return mean_score, max_distance
+
+
+@router.post("/v1/faces/liveness", response_model=LivenessResponse)
+def check_liveness(
+    body: FaceLivenessRequest,
+    settings: Settings = Depends(settings_dep),
+    pipeline=Depends(pipeline_dep),
+    checker=Depends(liveness_dep),
+) -> LivenessResponse:
+    """Passive multi-frame liveness: mean score + inter-frame variation."""
+    mean_score, max_distance = _run_multiframe_liveness(
+        body.images_base64, body, settings, pipeline, checker
+    )
+    return LivenessResponse(
+        ok=True,
+        liveness_score=mean_score,
+        frame_count=len(body.images_base64),
+        inter_frame_distance=max_distance,
+    )
 
 
 @router.delete("/v1/faces", response_model=ClearResponse)

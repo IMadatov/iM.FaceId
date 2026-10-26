@@ -167,6 +167,43 @@ Errors match enroll for the shared pipeline (invalid image, no face, quality, li
 
 ---
 
+### `POST /v1/faces/liveness` — Passive multi-frame liveness
+
+Passive multi-frame liveness. Send 2–`liveness_max_frames` (default 5) frames
+of the same person. Passes only when the mean per-frame anti-spoof score
+clears `liveness_threshold` **and** the frames vary enough between each other
+(max pairwise embedding cosine distance ≥ `liveness_min_distance`), which
+rejects a static photo or screen held to the camera. No face is stored.
+
+**Request**
+
+```json
+{
+  "images_base64": ["<base64>", "<base64>"],
+  "blur_min_variance": null,
+  "brightness_min": null,
+  "brightness_max": null,
+  "min_side_px": null,
+  "liveness_threshold": null,
+  "liveness_min_distance": null
+}
+```
+
+Optional fields override the server defaults when non-null.
+
+**Response 200**
+
+```json
+{ "ok": true, "liveness_score": 0.97, "frame_count": 3, "inter_frame_distance": 0.11 }
+```
+
+**Errors:** `400` invalid/oversized frame; `422` validation (fewer than 2 or
+more than `liveness_max_frames` frames, unknown field), no/multiple faces in a
+frame, quality failure, mean score below threshold, or frames too similar;
+`503` liveness model not installed.
+
+---
+
 ### `PUT /v1/faces/{face_id}` — Update
 
 Replace embedding for an existing face. Same body as enroll.

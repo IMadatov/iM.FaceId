@@ -11,5 +11,9 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (na * nb))
 
 
+def cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
+    return 1.0 - cosine_similarity(a, b)
+
+
 def is_match(score: float, threshold: float) -> bool:
     return score >= threshold

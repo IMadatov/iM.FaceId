@@ -59,6 +59,27 @@ class CheckResponse(BaseModel):
     liveness_score: float | None = None
 
 
+class FaceLivenessRequest(BaseModel):
+    """JSON body for multi-frame passive liveness check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    images_base64: list[str] = Field(..., min_length=2)
+    blur_min_variance: float | None = None
+    brightness_min: float | None = None
+    brightness_max: float | None = None
+    min_side_px: float | None = None
+    liveness_threshold: float | None = None
+    liveness_min_distance: float | None = None
+
+
+class LivenessResponse(BaseModel):
+    ok: bool = True
+    liveness_score: float
+    frame_count: int
+    inter_frame_distance: float
+
+
 class UpdateResponse(BaseModel):
     face_id: str
     updated: bool = True
