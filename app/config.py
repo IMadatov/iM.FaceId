@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     liveness_model_path: str = "./models/liveness/minifasnet_v2.onnx"
     liveness_threshold: float = 0.50
     liveness_crop_scale: float = 2.7
+    liveness_max_frames: int = 5
+    liveness_min_distance: float = 0.05  # NEEDS TUNING: min max-pairwise cosine distance
     # Face quality (liveness=true path only); relax to disable a check.
     face_blur_min_variance: float = 50.0
     face_brightness_min: float = 40.0
