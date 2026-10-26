@@ -92,7 +92,8 @@ Use **Try it out** on each endpoint in order:
 4. **List faces** — `POST /v1/faces/list` JSON (`limit`, `offset` optional).
 5. **Groups rebuild** — `POST /v1/faces/groups/rebuild` JSON (`min_score`, `min_size`, `top_k` optional) → `202` + `run_id`. Poll `GET /v1/faces/groups/rebuild/{run_id}` or list runs with `GET /v1/faces/groups/rebuild`. Concurrent rebuilds → `409`.
 6. **Groups** — `POST /v1/faces/groups/list` JSON (`min_size` optional) → latest **completed** Postgres snapshot.
-7. **Verify** — `POST /v1/faces/{face_id}/verify` JSON (`image_base64`, optional `match_threshold` / liveness knobs).
+7. **Liveness** — `POST /v1/faces/liveness` JSON (`images_base64`, optional quality / liveness knobs) → multi-frame passive liveness; rejects static photo/screen.
+8. **Verify** — `POST /v1/faces/{face_id}/verify` JSON (`image_base64`, optional `match_threshold` / liveness knobs).
 8. **Delete** — `DELETE /v1/faces/{face_id}` → `"deleted": true`.
 9. **Clear all** — `DELETE /v1/faces` → wipe embeddings (`deleted_count`).
 10. **Count / exists / stats** — `GET /v1/faces/count`, `GET /v1/faces/{face_id}`, `GET /v1/stats` (no body).
