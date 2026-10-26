@@ -591,3 +591,140 @@ def test_check_face_liveness_fail_422():
     assert r.status_code == 422
     assert "liveness" in r.json()["detail"].lower()
     assert c.get("/v1/faces/count").json()["count"] == 0
+
+
+def _liveness_json(images: list[bytes], **kwargs):
+    body = {
+        "images_base64": [base64.b64encode(i).decode("ascii") for i in images]
+    }
+    body.update(kwargs)
+    return body
+
+
+def _liveness_app(**settings_kwargs):
+    app = create_app(testing=True)
+    app.state.pipeline = FakeFacePipeline()
+    app.state.store = MemoryFaceStore()
+    _override_settings(
+        app,
+        face_blur_min_variance=0.0,
+        face_brightness_min=0.0,
+        face_brightness_max=255.0,
+        face_min_side_px=0.0,
+        **settings_kwargs,
+    )
+    return app
+
+
+def test_liveness_distinct_frames_pass():
+    app = _liveness_app()
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121), _img_bytes(122)]),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["frame_count"] == 3
+    assert body["liveness_score"] >= 0.5
+    assert body["inter_frame_distance"] > 0.05
+    assert c.get("/v1/faces/count").json()["count"] == 0
+
+
+def test_liveness_identical_frames_rejected_as_too_similar():
+    app = _liveness_app()
+    c = TestClient(app)
+    frame = _img_bytes(120)
+    r = c.post("/v1/faces/liveness", json=_liveness_json([frame, frame]))
+    assert r.status_code == 422
+    assert "similar" in r.json()["detail"].lower()
+    assert c.get("/v1/faces/count").json()["count"] == 0
+
+
+def test_liveness_low_mean_score_rejected():
+    from app.pipeline.fake_liveness import FakeLivenessChecker
+
+    app = _liveness_app()
+    app.state.liveness = FakeLivenessChecker(force_spoof=True)
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121)]),
+    )
+    assert r.status_code == 422
+    assert "score" in r.json()["detail"].lower()
+
+
+def test_liveness_single_frame_rejected_by_validation():
+    app = _liveness_app()
+    c = TestClient(app)
+    r = c.post("/v1/faces/liveness", json=_liveness_json([_img_bytes(120)]))
+    assert r.status_code == 422
+
+
+def test_liveness_too_many_frames_rejected():
+    app = _liveness_app()  # liveness_max_frames default = 5
+    c = TestClient(app)
+    frames = [_img_bytes(120 + i) for i in range(6)]
+    r = c.post("/v1/faces/liveness", json=_liveness_json(frames))
+    assert r.status_code == 422
+    assert "many" in r.json()["detail"].lower()
+
+
+def test_liveness_exactly_max_frames_pass():
+    app = _liveness_app()  # max = 5
+    c = TestClient(app)
+    frames = [_img_bytes(120 + i) for i in range(5)]
+    r = c.post("/v1/faces/liveness", json=_liveness_json(frames))
+    assert r.status_code == 200
+    assert r.json()["frame_count"] == 5
+
+
+def test_liveness_unknown_field_rejected():
+    app = _liveness_app()
+    c = TestClient(app)
+    body = _liveness_json([_img_bytes(120), _img_bytes(121)])
+    body["liveness"] = True
+    r = c.post("/v1/faces/liveness", json=body)
+    assert r.status_code == 422
+
+
+def test_liveness_bad_frame_names_index():
+    app = _liveness_app()
+    c = TestClient(app)
+    # second frame is all-black -> FakeFacePipeline raises "no face"
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(0)]),
+    )
+    assert r.status_code == 422
+    assert "frame[1]" in r.json()["detail"]
+
+
+def test_liveness_data_uri_prefix_decodes():
+    app = _liveness_app()
+    c = TestClient(app)
+    b64 = base64.b64encode(_img_bytes(120)).decode("ascii")
+    body = {
+        "images_base64": [
+            f"data:image/png;base64,{b64}",
+            base64.b64encode(_img_bytes(121)).decode("ascii"),
+        ]
+    }
+    r = c.post("/v1/faces/liveness", json=body)
+    assert r.status_code == 200
+    assert r.json()["frame_count"] == 2
+
+
+def test_liveness_model_unavailable_503():
+    from app.pipeline.fake_liveness import UnavailableLivenessChecker
+
+    app = _liveness_app()
+    app.state.liveness = UnavailableLivenessChecker()
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121)]),
+    )
+    assert r.status_code == 503
