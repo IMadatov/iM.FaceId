@@ -81,5 +81,57 @@ def test_view_change_spread_grows_with_rotation():
     assert still < 0.01
 
 
-def test_view_change_is_zero_for_a_symmetric_frontal_face():
-    assert view_change(_project(_face_model(25.0), 0.0)) == pytest.approx(0.0, abs=1e-3)
+def test_view_change_spread_is_independent_of_camera_distance():
+    """The gate must read the turn, not how close the camera is.
+
+    ``view_change`` gates ``planarity_residual``, and that residual barely moves
+    with distance. A gate that shrinks as the subject steps back therefore
+    rejects captures whose parallax evidence is perfectly good.
+    """
+    real = _face_model(25.0)
+    near = view_change_spread(
+        [_project(real, 0.0, dist=400.0), _project(real, 15.0, dist=400.0)]
+    )
+    far = view_change_spread(
+        [_project(real, 0.0, dist=1500.0), _project(real, 15.0, dist=1500.0)]
+    )
+    assert far == pytest.approx(near, rel=0.05)
+
+
+def test_view_change_spread_registers_a_left_right_alternation():
+    """Two opposite turns are mirror images, so an aspect-only read sees nothing.
+
+    Filming a liveness check as a left/right alternation never passes through
+    frontal, which is why the spread has to fall back on the signed perspective
+    cue for this shape of capture.
+    """
+    real = _face_model(25.0)
+    frames = [_project(real, -25.0), _project(real, 25.0)]
+    assert view_change(frames[0]) == pytest.approx(view_change(frames[1]), rel=1e-4)
+    assert view_change_spread(frames) > 0.05
+
+
+def test_view_change_spread_registers_a_turn_at_arms_length():
+    """A 20-degree turn at 1m must read as far more motion than a 2-degree wobble."""
+    real = _face_model(25.0)
+    turned = view_change_spread(
+        [_project(real, 0.0, dist=1000.0), _project(real, 20.0, dist=1000.0)]
+    )
+    wobble = view_change_spread(
+        [_project(real, 0.0, dist=1000.0), _project(real, 2.0, dist=1000.0)]
+    )
+    assert turned > 0.05
+    assert turned > 10 * wobble
+
+
+def test_view_change_peaks_at_frontal():
+    """Yaw in either direction foreshortens the face, so frontal is the extreme.
+
+    The absolute value is a per-subject baseline (it encodes face proportions),
+    so only its *spread* across frames is meaningful — this pins the direction
+    of change rather than any particular value.
+    """
+    real = _face_model(25.0)
+    frontal = view_change(_project(real, 0.0))
+    assert frontal > view_change(_project(real, 20.0))
+    assert frontal > view_change(_project(real, -20.0))
