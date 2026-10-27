@@ -25,10 +25,21 @@ def _pipeline(faces) -> InsightFacePipeline:
 
 IMG = np.zeros((4, 4, 3), dtype=np.uint8)
 BBOX = np.array([0.0, 0.0, 3.0, 3.0], dtype=np.float32)
+# InsightFace emits 5 keypoints: both eyes, nose, both mouth corners.
+KPS = np.array(
+    [[1.0, 1.0], [3.0, 1.0], [2.0, 2.0], [1.0, 3.0], [3.0, 3.0]], dtype=np.float32
+)
+
+_OMITTED = object()
 
 
-def _face(embedding, bbox=BBOX):
-    return SimpleNamespace(normed_embedding=embedding, bbox=bbox)
+def _face(embedding, bbox=BBOX, kps=_OMITTED):
+    attrs = {"normed_embedding": embedding, "bbox": bbox}
+    if kps is not _OMITTED:
+        attrs["kps"] = kps
+    else:
+        attrs["kps"] = KPS
+    return SimpleNamespace(**attrs)
 
 
 def test_embed_happy_path_shape_and_dtype():
@@ -44,6 +55,39 @@ def test_detect_bgr_returns_embedding_and_bbox():
     detected = _pipeline([_face(emb, bbox)]).detect_bgr(IMG)
     assert detected.embedding.shape == (512,)
     np.testing.assert_array_equal(detected.bbox, bbox)
+
+
+def test_detect_bgr_returns_keypoints_for_planarity():
+    detected = _pipeline([_face(np.ones(512, dtype=np.float32))]).detect_bgr(IMG)
+    assert detected.kps.shape == (5, 2)
+    assert detected.kps.dtype == np.float32
+    np.testing.assert_array_equal(detected.kps, KPS)
+
+
+def test_detect_bgr_without_keypoints_yields_none():
+    """Recognition packs without a keypoint head still enrol; only planarity needs kps."""
+    detected = _pipeline(
+        [_face(np.ones(512, dtype=np.float32), kps=None)]
+    ).detect_bgr(IMG)
+    assert detected.kps is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [np.ones((3, 2)), np.ones((5, 3)), np.ones(10)],
+    ids=["too_few_points", "wrong_width", "flat"],
+)
+def test_detect_bgr_wrong_keypoint_shape_raises(bad):
+    with pytest.raises(FaceDetectionError, match="keypoint"):
+        _pipeline([_face(np.ones(512, dtype=np.float32), kps=bad)]).detect_bgr(IMG)
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf])
+def test_detect_bgr_non_finite_keypoints_raises(value):
+    bad = KPS.copy()
+    bad[2, 0] = value
+    with pytest.raises(FaceDetectionError, match="non-finite"):
+        _pipeline([_face(np.ones(512, dtype=np.float32), kps=bad)]).detect_bgr(IMG)
 
 
 def test_detect_bgr_missing_bbox_raises():

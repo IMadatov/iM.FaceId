@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     liveness_crop_scale: float = 2.7
     liveness_max_frames: int = 5
     liveness_min_distance: float = 0.05  # NEEDS TUNING: min max-pairwise cosine distance
+    # Motion-parallax check. Synthetic 25mm-nose faces score 0.12 at 15 deg of
+    # yaw and 0.16 at 20; a flat photo scores 0.00 at every angle. Set to 0 to
+    # disable both this and the motion gate below.
+    liveness_min_planarity: float = 0.06  # NEEDS TUNING on real captures
+    # Minimum observed turn before the planarity score carries information:
+    # ~0.037 per +/-10 deg, so this is roughly a +/-11 deg head turn.
+    liveness_min_view_change: float = 0.04
     # Face quality (liveness=true path only); relax to disable a check.
     face_blur_min_variance: float = 50.0
     face_brightness_min: float = 40.0

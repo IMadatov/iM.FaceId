@@ -47,7 +47,19 @@ class InsightFacePipeline:
             raise FaceDetectionError(f"unexpected bbox shape {box.shape}")
         if not np.all(np.isfinite(box)):
             raise FaceDetectionError("bbox contains non-finite values")
-        return DetectedFace(embedding=vec, bbox=box)
+        return DetectedFace(embedding=vec, bbox=box, kps=self._keypoints(face))
+
+    @staticmethod
+    def _keypoints(face) -> np.ndarray | None:
+        kps = getattr(face, "kps", None)
+        if kps is None:
+            return None
+        points = np.asarray(kps, dtype=np.float32)
+        if points.shape != (5, 2):
+            raise FaceDetectionError(f"unexpected keypoint shape {points.shape}")
+        if not np.all(np.isfinite(points)):
+            raise FaceDetectionError("keypoints contain non-finite values")
+        return points
 
     def embed_bgr(self, image_bgr: np.ndarray) -> np.ndarray:
         return self.detect_bgr(image_bgr).embedding

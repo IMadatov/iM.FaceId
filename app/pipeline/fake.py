@@ -4,9 +4,48 @@ from app.errors import FaceDetectionError
 from app.pipeline.base import DetectedFace
 
 
+# A real head alternating between a hard left and a hard right turn: one adult
+# face model (25mm nose) pinhole-projected at -25 and +25 degrees of yaw.
+#
+# Multi-frame liveness gates on observed motion, so the stand-in pipeline has to
+# move -- consecutive detections must differ in viewing angle, whatever the
+# frame count, and alternating two poses satisfies that for any sequence length.
+# The protruding nose gives the pair the parallax a flat replay cannot produce.
+# tests/synthetic_face.py regenerates these: turning_head([-25.0, 25.0]).
+_DEFAULT_KPS_FRAMES = (
+    np.array(
+        [
+            [286.52, 215.38],
+            [351.82, 216.59],
+            [333.28, 252.57],
+            [292.22, 289.04],
+            [346.63, 287.01],
+        ],
+        dtype=np.float32,
+    ),
+    np.array(
+        [
+            [288.18, 216.59],
+            [353.48, 215.38],
+            [306.72, 252.57],
+            [293.37, 287.01],
+            [347.78, 289.04],
+        ],
+        dtype=np.float32,
+    ),
+)
+
+
 class FakeFacePipeline:
-    def __init__(self, faces_count: int = 1) -> None:
+    def __init__(
+        self, faces_count: int = 1, kps_frames: list | None = None
+    ) -> None:
         self.faces_count = faces_count
+        # Cycled per detect call, so frame i of a request sees keypoints i.
+        self._kps_frames = (
+            list(_DEFAULT_KPS_FRAMES) if kps_frames is None else list(kps_frames)
+        )
+        self._detect_calls = 0
 
     def ready(self) -> bool:
         return True
@@ -27,7 +66,9 @@ class FakeFacePipeline:
         x2 = w * 0.75
         y2 = h * 0.75
         bbox = np.array([x1, y1, x2, y2], dtype=np.float32)
-        return DetectedFace(embedding=v, bbox=bbox)
+        kps = self._kps_frames[self._detect_calls % len(self._kps_frames)]
+        self._detect_calls += 1
+        return DetectedFace(embedding=v, bbox=bbox, kps=kps)
 
     def embed_bgr(self, image_bgr: np.ndarray) -> np.ndarray:
         return self.detect_bgr(image_bgr).embedding

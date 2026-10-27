@@ -32,4 +32,6 @@ def test_liveness_response_shape():
         "liveness_score": 0.9,
         "frame_count": 2,
         "inter_frame_distance": 0.3,
+        # Omitted by callers that ran with the planarity check disabled.
+        "planarity_residual": None,
     }

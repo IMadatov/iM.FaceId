@@ -52,6 +52,7 @@ from app.imaging import decode_and_resize
 from app.jobs.group_rebuild import GroupRebuildConflict, GroupRebuildService
 from app.matching.cosine import cosine_distance, cosine_similarity, is_match
 from app.pipeline.image_quality import ensure_face_quality
+from app.pipeline.planarity import max_planarity_residual, view_change_spread
 
 router = APIRouter()
 
@@ -197,9 +198,16 @@ def _run_multiframe_liveness(images_base64, body, settings, pipeline, checker):
     min_distance = _resolve(
         body.liveness_min_distance, settings.liveness_min_distance
     )
+    min_planarity = _resolve(
+        body.liveness_min_planarity, settings.liveness_min_planarity
+    )
+    min_view_change = _resolve(
+        body.liveness_min_view_change, settings.liveness_min_view_change
+    )
 
     scores: list[float] = []
     embeddings = []
+    keypoints = []
     for index, image_base64 in enumerate(images_base64):
         try:
             img = _decode_base64_image(image_base64, settings)
@@ -221,6 +229,7 @@ def _run_multiframe_liveness(images_base64, body, settings, pipeline, checker):
         )
         scores.append(checker.score_bgr(img, bbox=detected.bbox))
         embeddings.append(detected.embedding)
+        keypoints.append(detected.kps)
 
     mean_score = float(sum(scores) / len(scores))
     max_distance = max(
@@ -238,7 +247,37 @@ def _run_multiframe_liveness(images_base64, body, settings, pipeline, checker):
             f"liveness check failed (frames too similar: "
             f"distance={max_distance:.4f} < {min_distance:.4f})"
         )
-    return mean_score, max_distance
+    residual = _check_planarity(
+        keypoints, min_planarity=min_planarity, min_view_change=min_view_change
+    )
+    return mean_score, max_distance, residual
+
+
+def _check_planarity(keypoints, *, min_planarity, min_view_change):
+    """Reject replays whose nose shows no motion parallax.
+
+    Returns the measured residual, or None when the check is relaxed to zero.
+    """
+    if min_planarity <= 0.0 and min_view_change <= 0.0:
+        return None
+    if any(kps is None for kps in keypoints):
+        raise DependencyUnavailableError(
+            "planarity check needs facial keypoints, which this model pack "
+            "does not provide (set LIVENESS_MIN_PLANARITY=0 to disable)"
+        )
+    spread = view_change_spread(keypoints)
+    if spread < min_view_change:
+        raise LivenessFailedError(
+            f"liveness check failed (not enough head movement: "
+            f"view change={spread:.4f} < {min_view_change:.4f})"
+        )
+    residual = max_planarity_residual(keypoints)
+    if residual < min_planarity:
+        raise LivenessFailedError(
+            f"liveness check failed (face looks flat: "
+            f"parallax={residual:.4f} < {min_planarity:.4f})"
+        )
+    return residual
 
 
 @router.post("/v1/faces/liveness", response_model=LivenessResponse)
@@ -249,7 +288,7 @@ def check_liveness(
     checker=Depends(liveness_dep),
 ) -> LivenessResponse:
     """Passive multi-frame liveness: mean score + inter-frame variation."""
-    mean_score, max_distance = _run_multiframe_liveness(
+    mean_score, max_distance, residual = _run_multiframe_liveness(
         body.images_base64, body, settings, pipeline, checker
     )
     return LivenessResponse(
@@ -257,6 +296,7 @@ def check_liveness(
         liveness_score=mean_score,
         frame_count=len(body.images_base64),
         inter_frame_distance=max_distance,
+        planarity_residual=residual,
     )
 
 

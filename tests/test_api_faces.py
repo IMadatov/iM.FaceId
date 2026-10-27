@@ -8,6 +8,7 @@ from app.deps import settings_dep
 from app.main import create_app
 from app.pipeline.fake import FakeFacePipeline
 from app.store.memory import MemoryFaceStore
+from tests.synthetic_face import flat_replay, turning_head
 
 
 def _client():
@@ -728,3 +729,77 @@ def test_liveness_model_unavailable_503():
         json=_liveness_json([_img_bytes(120), _img_bytes(121)]),
     )
     assert r.status_code == 503
+
+
+def test_liveness_rejects_a_flat_frame_sequence():
+    """A tilted photo or replayed screen is planar, so the nose shows no parallax."""
+    app = _liveness_app()
+    app.state.pipeline = FakeFacePipeline(kps_frames=flat_replay([-25.0, 0.0, 25.0]))
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121), _img_bytes(122)]),
+    )
+    assert r.status_code == 422
+    assert "flat" in r.json()["detail"].lower()
+
+
+def test_liveness_rejects_insufficient_head_movement():
+    """Without rotation a real face shows no parallax either, so the score is meaningless."""
+    app = _liveness_app()
+    app.state.pipeline = FakeFacePipeline(kps_frames=turning_head([0.0, 0.5]))
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121)]),
+    )
+    assert r.status_code == 422
+    assert "movement" in r.json()["detail"].lower()
+
+
+def test_liveness_reports_planarity_residual_for_a_real_turn():
+    app = _liveness_app()
+    app.state.pipeline = FakeFacePipeline(kps_frames=turning_head([-20.0, 0.0, 20.0]))
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121), _img_bytes(122)]),
+    )
+    assert r.status_code == 200
+    assert r.json()["planarity_residual"] > 0.06
+
+
+def test_liveness_without_keypoints_is_unavailable():
+    """Fail closed: a pack with no keypoint head cannot run the planarity check."""
+    app = _liveness_app()
+    app.state.pipeline = FakeFacePipeline(kps_frames=[None, None])
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121)]),
+    )
+    assert r.status_code == 503
+    assert "keypoint" in r.json()["detail"].lower()
+
+
+def test_liveness_planarity_check_disabled_at_zero_threshold():
+    """Zero relaxes the check, matching how the face-quality thresholds disable."""
+    app = _liveness_app(liveness_min_planarity=0.0, liveness_min_view_change=0.0)
+    app.state.pipeline = FakeFacePipeline(kps_frames=flat_replay([-25.0, 0.0, 25.0]))
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121), _img_bytes(122)]),
+    )
+    assert r.status_code == 200
+
+
+def test_liveness_client_can_tighten_planarity_threshold():
+    app = _liveness_app()
+    app.state.pipeline = FakeFacePipeline(kps_frames=turning_head([-20.0, 0.0, 20.0]))
+    c = TestClient(app)
+    body = _liveness_json([_img_bytes(120), _img_bytes(121), _img_bytes(122)])
+    body["liveness_min_planarity"] = 0.95
+    r = c.post("/v1/faces/liveness", json=body)
+    assert r.status_code == 422
+    assert "flat" in r.json()["detail"].lower()

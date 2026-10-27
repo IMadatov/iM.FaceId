@@ -71,6 +71,8 @@ class FaceLivenessRequest(BaseModel):
     min_side_px: float | None = None
     liveness_threshold: float | None = None
     liveness_min_distance: float | None = None
+    liveness_min_planarity: float | None = None
+    liveness_min_view_change: float | None = None
 
 
 class LivenessResponse(BaseModel):
@@ -78,6 +80,8 @@ class LivenessResponse(BaseModel):
     liveness_score: float
     frame_count: int
     inter_frame_distance: float
+    # None when the planarity check is relaxed to 0.
+    planarity_residual: float | None = None
 
 
 class UpdateResponse(BaseModel):
