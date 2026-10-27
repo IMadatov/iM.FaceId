@@ -57,22 +57,52 @@ gate. It reads only the four coplanar points, never the nose, so it measures the
 *viewing angle* and is deliberately blind to whether the subject is 3D; a spoof
 therefore fails on **planarity**, not on "no movement".
 
-**Client implication:** the frames must contain a real head turn. A
-straight → right → left → straight capture works well; three frontal selfies do
-not and will be rejected with *not enough head movement*.
+### How the motion gate measures a turn
 
-Reference values from a synthetic 25 mm-nose face model:
+Primarily by face **aspect ratio**: yaw compresses the face horizontally, so the
+interocular distance shrinks with the cosine of the angle while the eye-to-mouth
+span, lying along the axis of rotation, does not. The log ratio of the two
+cancels face size and pixel scale, and — unlike a near/far perspective cue — it
+does not fade as the subject steps back. That matters because the residual being
+gated is itself almost distance-independent, so a distance-sensitive gate would
+reject captures whose parallax evidence is perfectly good.
 
-| Yaw between frames | Real face residual | Flat photo residual | `view_change_spread` |
-|--------------------|--------------------|---------------------|----------------------|
-| ±10° | 0.077 | 0.000 | 0.037 |
-| ±15° | 0.117 | 0.000 | 0.056 |
-| ±20° | 0.159 | 0.000 | 0.073 |
-| ±25° | 0.203 | 0.000 | 0.091 |
+Aspect ratio cannot tell *which way* the head turned: two opposite turns are
+mirror images with the same aspect. So a left/right alternation that never
+passes through frontal would read as zero motion. For that shape of capture the
+spread falls back on the signed near/far asymmetry of the quad's vertical edges,
+and takes whichever of the two reads is larger. The fallback decays with camera
+distance, which is why the alternating row below drops off at 1.5 m while the
+one-sided rows do not.
+
+Taking the larger read cannot admit a spoof: the gate only decides whether the
+residual is *interpretable*. A flat or motionless capture still scores a
+near-zero residual and is turned away by `liveness_min_planarity` instead.
+
+**Client implication:** the frames must contain a real head turn of roughly 13°
+or more. A straight → right → left → straight capture works well; three frontal
+selfies do not and will be rejected with *not enough head movement*. Capturing a
+near-frontal frame alongside the turned ones gives the widest margin, since it
+lets the distance-independent aspect read do the work.
+
+Reference values from a synthetic 25 mm-nose face model (a flat photo scores a
+residual of 0.000 in every row):
+
+| Capture | Real face residual | Spread @0.5 m | Spread @1.5 m |
+|---------|--------------------|---------------|---------------|
+| frontal → 10° | 0.077 | 0.019 | 0.015 |
+| frontal → 15° | 0.117 | 0.035 | 0.035 |
+| frontal → 20° | 0.159 | 0.062 | 0.062 |
+| frontal → 25° | 0.203 | 0.098 | 0.098 |
+| −15° / 0 / +15° | 0.235 | 0.056 | 0.035 |
+| −25° / +25°, no frontal frame | 0.411 | 0.091 | 0.030 |
 
 > These come from an idealised pinhole projection with exact landmarks. Real
 > SCRFD keypoints jitter by a few pixels, which raises the flat-photo residual
-> above zero — calibrate on real captures before tightening the default.
+> above zero — calibrate on real captures before tightening the default. The
+> jitter matters more than it looks: the residual is normalised by interocular
+> distance, and the service downscales every frame to `max_image_side` (640 px)
+> before detection, so a distant face is measured from few pixels.
 
 ---
 
@@ -93,7 +123,7 @@ Reference values from a synthetic 25 mm-nose face model:
 | `liveness_threshold` | `number` | no | server (`0.50`) | Minimum acceptable **mean** anti-spoof score (0–1). |
 | `liveness_min_distance` | `number` | no | server (`0.05`) | Minimum acceptable **max pairwise** cosine distance between frame embeddings. |
 | `liveness_min_planarity` | `number` | no | server (`0.06`) | Minimum acceptable **max pairwise** nose-reprojection residual. `0` disables the planarity check (and the movement gate with it). |
-| `liveness_min_view_change` | `number` | no | server (`0.04`) | Minimum head turn required before the planarity score is trusted. ≈ ±11°. |
+| `liveness_min_view_change` | `number` | no | server (`0.025`) | Minimum head turn required before the planarity score is trusted. ≈ 13° of yaw, at any camera distance. |
 
 Notes:
 - There is **no `liveness` flag** — this endpoint always runs the full gate
@@ -150,7 +180,7 @@ All failures return a JSON body `{ "detail": "<message>" }`.
 | `422` | A frame fails the quality gate (blur / brightness / size) | `image quality failed: face too small (...)` |
 | `422` | Mean score below threshold | `liveness check failed (mean score=0.12 < 0.50)` |
 | `422` | Frames too similar (static photo/screen suspected) | `liveness check failed (frames too similar: distance=0.00 < 0.05)` |
-| `422` | Head did not turn enough to judge parallax | `liveness check failed (not enough head movement: view change=0.01 < 0.04)` |
+| `422` | Head did not turn enough to judge parallax | `liveness check failed (not enough head movement: view change=0.01 < 0.025)` |
 | `422` | Nose showed no parallax (photo/screen suspected) | `liveness check failed (face looks flat: parallax=0.00 < 0.06)` |
 | `503` | Liveness model not installed on the server | `liveness model not available (run scripts/download_liveness_model.py)` |
 | `503` | Face model pack provides no keypoints | `planarity check needs facial keypoints, which this model pack does not provide (set LIVENESS_MIN_PLANARITY=0 to disable)` |
@@ -216,7 +246,7 @@ defaults:
 | `liveness_threshold` | `0.50` | Default mean-score threshold (shared with the single-image paths). |
 | `liveness_min_distance` | `0.05` | Default inter-frame distance threshold. |
 | `liveness_min_planarity` | `0.06` | Default nose-parallax threshold. `0` disables the planarity check. |
-| `liveness_min_view_change` | `0.04` | Minimum observed head turn (≈ ±11°) before planarity is judged. |
+| `liveness_min_view_change` | `0.025` | Minimum observed head turn (≈ 13° of yaw, distance-independent) before planarity is judged. |
 
 > **`liveness_min_distance` needs tuning.** `0.05` is a conservative starting
 > value, not a calibrated one. Measure the max-pairwise distance on real device

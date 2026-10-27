@@ -30,8 +30,19 @@ def face_model(nose_protrusion: float = REAL_NOSE_MM) -> np.ndarray:
     )
 
 
-def project(points3d: np.ndarray, yaw_deg: float, *, f: float = FOCAL_PX) -> np.ndarray:
-    """Yaw-rotate about the vertical axis and pinhole-project to (5, 2) pixels."""
+def project(
+    points3d: np.ndarray,
+    yaw_deg: float,
+    *,
+    f: float = FOCAL_PX,
+    dist: float = CAMERA_DISTANCE_MM,
+) -> np.ndarray:
+    """Yaw-rotate about the vertical axis and pinhole-project to (5, 2) pixels.
+
+    ``f`` scales the face in pixels; ``dist`` changes how strong the perspective
+    foreshortening is. They are not interchangeable: only ``dist`` alters the
+    *shape* of the projected face, so distance-invariance claims need ``dist``.
+    """
     t = np.deg2rad(yaw_deg)
     rot = np.array(
         [
@@ -41,19 +52,24 @@ def project(points3d: np.ndarray, yaw_deg: float, *, f: float = FOCAL_PX) -> np.
         ]
     )
     cam = points3d @ rot.T
-    cam[:, 2] += CAMERA_DISTANCE_MM
+    cam[:, 2] += dist
     cx, cy = PRINCIPAL_POINT
     return np.stack(
         [cx + f * cam[:, 0] / cam[:, 2], cy + f * cam[:, 1] / cam[:, 2]], axis=1
     ).astype(np.float32)
 
 
-def turning_head(yaws: list[float], *, nose_protrusion: float = REAL_NOSE_MM):
+def turning_head(
+    yaws: list[float],
+    *,
+    nose_protrusion: float = REAL_NOSE_MM,
+    dist: float = CAMERA_DISTANCE_MM,
+):
     """Keypoints for one subject seen at each yaw angle."""
     model = face_model(nose_protrusion)
-    return [project(model, yaw) for yaw in yaws]
+    return [project(model, yaw, dist=dist) for yaw in yaws]
 
 
-def flat_replay(yaws: list[float]):
+def flat_replay(yaws: list[float], *, dist: float = CAMERA_DISTANCE_MM):
     """Keypoints for a printed photo or screen tilted to each angle."""
-    return turning_head(yaws, nose_protrusion=0.0)
+    return turning_head(yaws, nose_protrusion=0.0, dist=dist)

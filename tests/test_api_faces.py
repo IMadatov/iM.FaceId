@@ -769,6 +769,26 @@ def test_liveness_reports_planarity_residual_for_a_real_turn():
     assert r.json()["planarity_residual"] > 0.06
 
 
+def test_liveness_accepts_a_real_turn_at_arms_length():
+    """Regression: a good 20-degree turn was rejected once the subject stepped back.
+
+    The motion gate used to read a perspective effect that decays with distance,
+    so the same turn that passed at 50cm failed at 1m while its parallax
+    evidence (the thing the gate exists to protect) was unchanged.
+    """
+    app = _liveness_app()
+    app.state.pipeline = FakeFacePipeline(
+        kps_frames=turning_head([0.0, 20.0], dist=1000.0)
+    )
+    c = TestClient(app)
+    r = c.post(
+        "/v1/faces/liveness",
+        json=_liveness_json([_img_bytes(120), _img_bytes(121)]),
+    )
+    assert r.status_code == 200, r.json()
+    assert r.json()["planarity_residual"] > 0.06
+
+
 def test_liveness_without_keypoints_is_unavailable():
     """Fail closed: a pack with no keypoint head cannot run the planarity check."""
     app = _liveness_app()

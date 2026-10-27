@@ -28,9 +28,13 @@ class Settings(BaseSettings):
     # yaw and 0.16 at 20; a flat photo scores 0.00 at every angle. Set to 0 to
     # disable both this and the motion gate below.
     liveness_min_planarity: float = 0.06  # NEEDS TUNING on real captures
-    # Minimum observed turn before the planarity score carries information:
-    # ~0.037 per +/-10 deg, so this is roughly a +/-11 deg head turn.
-    liveness_min_view_change: float = 0.04
+    # Minimum observed turn before the planarity score carries information.
+    # Scale is log face-aspect: ~0.015 at 10 deg of yaw, 0.035 at 15, 0.062 at
+    # 20, independent of camera distance. 0.025 is ~13 deg, where a real face
+    # scores ~0.10 against the 0.06 planarity floor; a 5 deg wobble reaches only
+    # 0.009. The ceiling is set by left/right alternations, which fall back on a
+    # distance-decaying cue and reach just 0.030 at 1.5m.
+    liveness_min_view_change: float = 0.025
     # Face quality (liveness=true path only); relax to disable a check.
     face_blur_min_variance: float = 50.0
     face_brightness_min: float = 40.0
