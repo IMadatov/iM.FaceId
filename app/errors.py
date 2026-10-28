@@ -1,26 +1,22 @@
-class InvalidImageError(Exception):
-    """Bad or oversized image upload."""
+"""Deprecated import path. Kept so existing tests and adapters keep working.
 
+New code imports from `app.domain.errors`.
+"""
 
-class FaceDetectionError(Exception):
-    """No face or multiple faces."""
+from app.domain.errors import (
+    DependencyUnavailableError,
+    FaceDetectionError,
+    FaceNotFoundError,
+    ImageQualityError,
+    InvalidImageError,
+    LivenessFailedError,
+)
 
-    def __init__(self, message: str, *, code: str = "face_detection"):
-        super().__init__(message)
-        self.code = code
-
-
-class FaceNotFoundError(Exception):
-    """Unknown face_id."""
-
-
-class LivenessFailedError(Exception):
-    """Image failed anti-spoof / liveness check."""
-
-
-class ImageQualityError(Exception):
-    """Face crop failed blur / brightness / size quality checks."""
-
-
-class DependencyUnavailableError(Exception):
-    """Model or Qdrant unavailable."""
+__all__ = [
+    "DependencyUnavailableError",
+    "FaceDetectionError",
+    "FaceNotFoundError",
+    "ImageQualityError",
+    "InvalidImageError",
+    "LivenessFailedError",
+]
