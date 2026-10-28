@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
-from app.domain.errors import ImageQualityError
 from app.infrastructure.pipeline.metrics import _crop_face_bgr
+
+__all__ = ["ensure_face_quality", "_crop_face_bgr"]
 
 
 def ensure_face_quality(
@@ -18,41 +18,24 @@ def ensure_face_quality(
     brightness_max: float,
     min_side_px: float,
 ) -> None:
-    """Raise ``ImageQualityError`` if the face crop fails quality checks.
+    """Deprecated. Runs the domain quality chain; kept for the legacy routes."""
+    from app.application.params import GateParams
+    from app.domain.checks.base import Frame
+    from app.domain.checks.chains import build_quality_chain
+    from app.domain.face import DetectedFace
+    from app.infrastructure.pipeline.metrics import OpenCvFaceImageMetrics
 
-    Disable a check by relaxing its threshold: ``blur_min_variance=0``,
-    brightness ``0``/``255``, or ``min_side_px=0``.
-    """
-    x1, y1, x2, y2 = (float(v) for v in np.asarray(bbox, dtype=np.float64).reshape(-1)[:4])
-    side = min(max(0.0, x2 - x1), max(0.0, y2 - y1))
-    if min_side_px > 0 and side < min_side_px:
-        raise ImageQualityError(
-            f"image quality failed: face too small "
-            f"(min side={side:.1f}px < {min_side_px:.1f}px)"
-        )
-
-    crop = _crop_face_bgr(image_bgr, bbox)
-    if crop.size == 0:
-        raise ImageQualityError("image quality failed: empty face crop")
-
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-
-    if blur_min_variance > 0:
-        variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        if variance < blur_min_variance:
-            raise ImageQualityError(
-                f"image quality failed: blur too high "
-                f"(laplacian_var={variance:.2f} < {blur_min_variance:.2f})"
-            )
-
-    mean_brightness = float(gray.mean())
-    if brightness_min > 0 and mean_brightness < brightness_min:
-        raise ImageQualityError(
-            f"image quality failed: brightness too low "
-            f"(mean={mean_brightness:.1f} < {brightness_min:.1f})"
-        )
-    if brightness_max < 255 and mean_brightness > brightness_max:
-        raise ImageQualityError(
-            f"image quality failed: brightness too high "
-            f"(mean={mean_brightness:.1f} > {brightness_max:.1f})"
-        )
+    gate = GateParams(
+        blur_min_variance=blur_min_variance,
+        brightness_min=brightness_min,
+        brightness_max=brightness_max,
+        min_side_px=min_side_px,
+        liveness_threshold=0.0,
+    )
+    frame = Frame(
+        image_bgr=image_bgr,
+        detected=DetectedFace(embedding=None, bbox=bbox, kps=None),
+        metrics=OpenCvFaceImageMetrics(),
+    )
+    for check in build_quality_chain(gate):
+        check.verify(frame)
