@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     max_image_side: int = 640
     max_upload_bytes: int = 5_000_000
     embedding_dim: int = 512
+    face_device: str = "auto"
 
 
 def get_settings() -> Settings:

@@ -1,13 +1,17 @@
-"""Silent-Face-Anti-Spoofing MiniFASNet-V2 ONNX checker (CPU)."""
+"""Silent-Face-Anti-Spoofing MiniFASNet-V2 ONNX checker."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from app.errors import LivenessFailedError
+
+
+logger = logging.getLogger(__name__)
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -72,14 +76,20 @@ class OnnxLivenessChecker:
 
     _LIVE_CLASS = 1
 
-    def __init__(self, model_path: str, *, crop_scale: float = 2.7) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        crop_scale: float = 2.7,
+        providers: list[str] | None = None,
+    ) -> None:
         import onnxruntime as ort
 
         path = Path(model_path)
         if not path.is_file():
             raise FileNotFoundError(f"liveness model not found: {model_path}")
         self._session = ort.InferenceSession(
-            str(path), providers=["CPUExecutionProvider"]
+            str(path), providers=providers or ["CPUExecutionProvider"]
         )
         self._input_name = self._session.get_inputs()[0].name
         self._crop_scale = crop_scale
@@ -122,11 +132,27 @@ class OnnxLivenessChecker:
         return score
 
 
-def load_liveness_checker(model_path: str, *, crop_scale: float = 2.7):
+def load_liveness_checker(
+    model_path: str, *, crop_scale: float = 2.7, providers: list[str] | None = None
+):
     """Return OnnxLivenessChecker or UnavailableLivenessChecker."""
     from app.pipeline.fake_liveness import UnavailableLivenessChecker
 
     try:
-        return OnnxLivenessChecker(model_path, crop_scale=crop_scale)
-    except Exception:
-        return UnavailableLivenessChecker()
+        return OnnxLivenessChecker(
+            model_path, crop_scale=crop_scale, providers=providers
+        )
+    except Exception as exc:
+        if not providers or "CUDAExecutionProvider" not in providers:
+            return UnavailableLivenessChecker()
+        logger.warning(
+            "CUDA liveness init failed (%s); falling back to CPU", exc
+        )
+        try:
+            return OnnxLivenessChecker(
+                model_path,
+                crop_scale=crop_scale,
+                providers=["CPUExecutionProvider"],
+            )
+        except Exception:
+            return UnavailableLivenessChecker()

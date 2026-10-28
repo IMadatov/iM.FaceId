@@ -1,6 +1,6 @@
 # iM.FaceId
 
-iM.FaceId is an on-premise, CPU-only FaceID microservice for internal student attendance verification. It enrolls face embeddings in Qdrant, supports 1:1 verify and 1:N search for duplicate detection, and exposes a FastAPI OpenAPI surface at `/docs` for manual testing. MVP is intended for internal network use only; there is no authentication layer.
+iM.FaceId is an on-premise FaceID microservice for internal student attendance verification. The default Docker Compose stack runs on CPU; an optional GPU profile uses NVIDIA hardware when available. It enrolls face embeddings in Qdrant, supports 1:1 verify and 1:N search for duplicate detection, and exposes a FastAPI OpenAPI surface at `/docs` for manual testing. MVP is intended for internal network use only; there is no authentication layer.
 
 ## Prerequisites
 
@@ -41,6 +41,23 @@ Stop:
 ```bash
 docker compose down
 ```
+
+## GPU deploy (optional)
+
+Requires NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host.
+
+Do **not** run default `api` and `api-gpu` together (both bind host port `8000`). `docker compose --profile gpu up` starts every service in the profile **and** unprofiled services, so start only Qdrant and the GPU API:
+
+```bash
+docker compose --profile gpu up --build -d qdrant api-gpu
+```
+
+`FACE_DEVICE` defaults to `auto` (CUDA when available, otherwise CPU fallback).
+
+| Service | CPUs | Memory | Notes |
+|---------|------|--------|-------|
+| `api-gpu` | 2.0 | 4g | needs NVIDIA GPU |
+| `qdrant` | 1.0 | 2g | same as CPU stack |
 
 ## Local setup (optional host venv)
 
@@ -118,6 +135,7 @@ Optional: enroll a second photo of the same person, then **rebuild groups** or *
 | `QDRANT_URL` | Qdrant HTTP URL | `http://localhost:6333` (Compose: `http://qdrant:6333`) |
 | `QDRANT_COLLECTION` | Collection name | `faces` |
 | `DATABASE_URL` | SQLAlchemy URL for group runs (host Postgres) | See `.env` / `.env.example` (`imfaceid` @ `localhost` or `host.docker.internal`) |
+| `FACE_DEVICE` | Inference device (`auto`, `cpu`, or `cuda`) | `auto` |
 | `FACE_MATCH_THRESHOLD` | Default 1:1 verify cutoff (JSON `match_threshold` overrides) | `0.40` |
 | `FACE_SEARCH_MIN_SCORE` | Default min score for search / group rebuild (JSON `min_score` overrides) | `0.40` |
 | `FACE_SEARCH_DEFAULT_LIMIT` | Default top-K | `5` |

@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -19,8 +22,48 @@ from app.errors import (
 )
 from app.jobs.group_rebuild import GroupRebuildService
 
+if TYPE_CHECKING:
+    from app.pipeline.device import ResolvedDevice
+    from app.pipeline.onnx_insightface import InsightFacePipeline
+
 
 logger = logging.getLogger(__name__)
+
+
+def build_insightface_with_fallback(
+    settings, resolved: ResolvedDevice
+) -> tuple[InsightFacePipeline, ResolvedDevice]:
+    from app.pipeline.device import ResolvedDevice
+    from app.pipeline.onnx_insightface import InsightFacePipeline
+
+    try:
+        pipe = InsightFacePipeline(
+            settings.model_dir,
+            embedding_dim=settings.embedding_dim,
+            providers=resolved.providers,
+            ctx_id=resolved.ctx_id,
+        )
+        return pipe, resolved
+    except Exception as exc:
+        if resolved.effective != "cuda":
+            raise
+        logger.warning(
+            "CUDA InsightFace init failed (%s); falling back to CPU", exc
+        )
+        cpu = ResolvedDevice(
+            requested=resolved.requested,
+            effective="cpu",
+            providers=["CPUExecutionProvider"],
+            ctx_id=-1,
+            fallback_reason=f"InsightFace CUDA init failed: {exc}",
+        )
+        pipe = InsightFacePipeline(
+            settings.model_dir,
+            embedding_dim=settings.embedding_dim,
+            providers=cpu.providers,
+            ctx_id=cpu.ctx_id,
+        )
+        return pipe, cpu
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
@@ -67,13 +110,30 @@ def _wire_database(app: FastAPI, database_url: str) -> None:
 async def _production_lifespan(app: FastAPI):
     # Fail fast with a clear message: the service is useless without models and Qdrant.
     from app.config import get_settings
-    from app.pipeline.onnx_insightface import InsightFacePipeline
+    from app.pipeline.device import resolve_face_device
     from app.store.qdrant import QdrantFaceStore
 
     settings = get_settings()
     try:
-        app.state.pipeline = InsightFacePipeline(
-            settings.model_dir, embedding_dim=settings.embedding_dim
+        resolved = resolve_face_device(settings.face_device)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    logger.info(
+        "face device requested=%s effective=%s fallback=%s",
+        resolved.requested,
+        resolved.effective,
+        resolved.fallback_reason,
+    )
+    if resolved.fallback_reason:
+        logger.warning(
+            "FACE_DEVICE fallback requested=%s effective=%s reason=%s",
+            resolved.requested,
+            resolved.effective,
+            resolved.fallback_reason,
+        )
+    try:
+        app.state.pipeline, resolved = build_insightface_with_fallback(
+            settings, resolved
         )
     except Exception as exc:
         logger.error(
@@ -101,7 +161,9 @@ async def _production_lifespan(app: FastAPI):
     from app.pipeline.onnx_liveness import load_liveness_checker
 
     app.state.liveness = load_liveness_checker(
-        settings.liveness_model_path, crop_scale=settings.liveness_crop_scale
+        settings.liveness_model_path,
+        crop_scale=settings.liveness_crop_scale,
+        providers=resolved.providers,
     )
     if not app.state.liveness.ready():
         logger.warning(

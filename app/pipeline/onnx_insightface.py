@@ -8,7 +8,13 @@ class InsightFacePipeline:
     _dim: int = 512
 
     def __init__(
-        self, model_dir: str, model_name: str = "buffalo_sc", embedding_dim: int = 512
+        self,
+        model_dir: str,
+        model_name: str = "buffalo_sc",
+        embedding_dim: int = 512,
+        *,
+        providers: list[str] | None = None,
+        ctx_id: int = -1,
     ) -> None:
         from insightface.app import FaceAnalysis
 
@@ -16,9 +22,9 @@ class InsightFacePipeline:
         self._app = FaceAnalysis(
             name=model_name,
             root=model_dir,
-            providers=["CPUExecutionProvider"],
+            providers=providers or ["CPUExecutionProvider"],
         )
-        self._app.prepare(ctx_id=-1, det_size=(640, 640))
+        self._app.prepare(ctx_id=ctx_id, det_size=(640, 640))
         self._ready = True
 
     def ready(self) -> bool:
