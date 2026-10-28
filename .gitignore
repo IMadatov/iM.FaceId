@@ -9,3 +9,4 @@ models/
 .idea/
 .vscode/
 /graphify-out
+.superpowers/

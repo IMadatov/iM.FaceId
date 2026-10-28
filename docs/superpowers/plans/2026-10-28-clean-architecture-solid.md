@@ -42,8 +42,8 @@ app/
   domain/
     errors.py                 # moved from app/errors.py (unchanged content)
     face.py                   # DetectedFace (moved from pipeline/base.py)
-    matching.py               # cosine / match helpers (moved from app/matching.py)
-    grouping.py               # pure grouping (moved from app/grouping.py)
+    matching/                 # cosine.py, grouping.py, ann_grouping.py
+                               # (package move: git mv app/matching app/domain/matching)
     planarity.py              # moved from app/pipeline/planarity.py
     ports/
       __init__.py
@@ -59,12 +59,13 @@ app/
       __init__.py
       base.py                 # Frame, FrameSequence, FrameCheck, SequenceCheck
       quality.py              # MinSize, FaceCrop, Blur, BrightnessMin, BrightnessMax
-      liveness.py             # LivenessScoreCheck, MeanLivenessCheck
+      liveness.py             # LivenessScoreCheck, MeanLivenessCheck, LivenessReadyCheck
       motion.py               # InterFrameDistance, KeypointsAvailable, ViewChange, Planarity
-      chains.py               # build_frame_chain, build_sequence_chain
+      chains.py               # build_quality_chain, build_single_frame_chain,
+                               # planarity_enabled, build_sequence_chain
   application/
     params.py                 # GateParams, MultiframeParams
-    gate.py                   # FaceGate (single-frame), MultiframeGate
+    gate.py                   # FaceGate
     use_cases/                # 9 classes
     queries/                  # 3 classes
   infrastructure/
@@ -181,7 +182,7 @@ print(len(spec["paths"]), "paths")
 PY
 ```
 
-Expected: prints `17 paths` (count path objects, not operations).
+Expected: prints `13 paths` — `len(spec["paths"])` counts path objects, not operations. The 17 `@router.*` operations are spread across 13 distinct path objects (several paths serve both GET and POST/PUT/DELETE).
 
 - [ ] **Step 4: Run the contract test — it must pass against unmodified code**
 
@@ -250,6 +251,10 @@ def _imported_modules(path: pathlib.Path) -> set[str]:
     return names
 
 
+def test_domain_package_exists():
+    assert (DOMAIN / "errors.py").is_file()
+
+
 def test_domain_imports_nothing_outward():
     offenders = []
     for path in DOMAIN.rglob("*.py"):
@@ -259,58 +264,28 @@ def test_domain_imports_nothing_outward():
     assert offenders == [], "domain layer reaches outward:\n" + "\n".join(offenders)
 ```
 
+Without `test_domain_package_exists`, `test_domain_imports_nothing_outward` would pass vacuously on an unmodified tree: `app/domain` does not exist yet, so `DOMAIN.rglob` yields nothing and the `offenders == []` assertion holds for the wrong reason. The guard test makes the failure explicit.
+
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `python -m pytest tests/test_domain_layering.py -v`
-Expected: FAIL — `app/domain` does not exist, so `DOMAIN.rglob` yields nothing and... it would *pass* vacuously. Add the guard first:
-
-```python
-def test_domain_package_exists():
-    assert (DOMAIN / "errors.py").is_file()
-```
-
-Re-run. Expected: `test_domain_package_exists` FAILS.
+Expected: `test_domain_package_exists` FAILS (`app/domain` does not exist yet). `test_domain_imports_nothing_outward` passes vacuously for now — that is expected and gets exercised for real once Step 3 creates the package.
 
 - [ ] **Step 3: Create the domain package and move errors**
 
 Create `app/domain/__init__.py` (empty file).
 
-Create `app/domain/errors.py` with the exact current content of `app/errors.py`:
+Move `app/errors.py` to `app/domain/errors.py` with `git mv`, not a retype:
 
-```python
-class InvalidImageError(Exception):
-    """Raised when the uploaded bytes are not a decodable image."""
-
-
-class FaceDetectionError(Exception):
-    """Raised when no usable face is found in the image."""
-
-    def __init__(self, message: str, *, code: str = "face_detection") -> None:
-        super().__init__(message)
-        self.code = code
-
-
-class FaceNotFoundError(Exception):
-    """Raised when a face_id is absent from the store."""
-
-
-class LivenessFailedError(Exception):
-    """Raised when the anti-spoof check rejects the frame."""
-
-
-class ImageQualityError(Exception):
-    """Raised when the image fails a quality gate (blur, brightness, face size)."""
-
-
-class DependencyUnavailableError(Exception):
-    """Raised when a required model or backing service is not ready."""
+```bash
+git mv app/errors.py app/domain/errors.py
 ```
 
-Verify the docstrings against `app/errors.py` before writing — copy whatever is there rather than the text above if they differ.
+The file's content is not retyped — the error `detail` strings and docstrings stay byte-identical, and git keeps the blame history. The next step recreates `app/errors.py` as a re-export shim, so the old import path keeps resolving.
 
 - [ ] **Step 4: Turn `app/errors.py` into a shim**
 
-Replace the whole file with:
+`app/errors.py` no longer exists after the `git mv` above; recreate it as a thin re-export shim so existing importers keep working. Replace what is now a nonexistent file with a new one:
 
 ```python
 """Deprecated import path. Kept so existing tests and adapters keep working.
@@ -607,22 +582,31 @@ class RebuildLock(Protocol):
 
     The shipped adapter is process-local (threading.Lock), so single-flight
     holds only within one worker process. See the spec's "Known limitation".
+    `locked()` exists because `GroupRebuildService.execute()` calls it in its
+    `finally` branch; a future distributed adapter will have to emulate it.
     """
 
     def acquire(self, blocking: bool = True) -> bool: ...
     def release(self) -> None: ...
+    def locked(self) -> bool: ...
 ```
 
 `app/domain/ports/groups.py` — mirror `GroupsRepository` exactly. Confirm the real signatures first, then write:
 
+The row types are deliberately left unannotated. `get_run`, `list_runs`, `create_run` and
+`latest_completed` all return SQLAlchemy ORM rows, and naming `GroupRun` here — even under
+`if TYPE_CHECKING:` — makes `app/domain/` import `app.infrastructure`, which the layering guard
+flags (`ast.walk` does not skip a `TYPE_CHECKING` block). Task 8's `RebuildRunView` and
+`GroupSnapshotView` are where those rows become typed; this port stays structural.
+
 ```python
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
 class GroupsReader(Protocol):
     def get_run(self, run_id: str): ...
-    def list_runs(self, *, limit: int): ...
+    def list_runs(self) -> list[Any]: ...
     def has_running(self) -> bool: ...
     def latest_completed(self): ...
 
@@ -631,10 +615,10 @@ class GroupsReader(Protocol):
 class GroupsWriter(Protocol):
     def create_run(self, *, threshold: float, top_k: int, min_size: int): ...
     def mark_failed(self, run_id: str, error: str) -> None: ...
-    def save_completed(self, *args, **kwargs) -> None: ...
+    def save_completed(
+        self, run_id: str, *, face_count: int, groups: list[list[str]], keep_runs: int = 2
+    ) -> None: ...
 ```
-
-Replace `*args, **kwargs` and the bare `...` return annotations with the real ones read off `app/db/repository.py`. `*args, **kwargs` in a port is a placeholder and must not survive into the commit.
 
 `app/domain/ports/unit_of_work.py`:
 
@@ -714,7 +698,7 @@ Three mechanical relocations. `matching.py`, `grouping.py` and `planarity.py` ar
 - Move: `app/imaging.py` → `app/infrastructure/imaging.py`
 - Move: `app/store/` → `app/infrastructure/store/`
 - Move: `app/db/` → `app/infrastructure/db/`
-- Move: `app/pipeline/{insightface,fake,onnx_liveness,fake_liveness,device,image_quality}.py` → `app/infrastructure/pipeline/`
+- Move: `app/pipeline/{onnx_insightface,fake,onnx_liveness,fake_liveness,device,image_quality}.py` → `app/infrastructure/pipeline/`
 - Create: `app/infrastructure/__init__.py`, `app/infrastructure/identity.py`, `app/infrastructure/locks/__init__.py`, `app/infrastructure/locks/thread_lock.py`, `app/infrastructure/db/unit_of_work.py`
 - Create: shims `app/imaging.py`, `app/matching/cosine.py`, `app/matching/grouping.py`, `app/matching/ann_grouping.py`, `app/store/*.py`, `app/db/*.py`, `app/pipeline/*.py` re-exporting from the new homes (all deleted in Task 11)
 - Test: `tests/test_infrastructure_adapters.py`
@@ -812,7 +796,9 @@ def test_thread_lock_is_single_flight():
     assert isinstance(lock, RebuildLock)
     assert lock.acquire(blocking=False) is True
     assert lock.acquire(blocking=False) is False
+    assert lock.locked() is True
     lock.release()
+    assert lock.locked() is False
     assert lock.acquire(blocking=False) is True
     lock.release()
 ```
@@ -869,6 +855,9 @@ class ThreadRebuildLock:
 
     def release(self) -> None:
         self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
 ```
 
 - [ ] **Step 7: Write the unit-of-work adapter**
@@ -936,6 +925,7 @@ Two protocols, not one: `MinSizeCheck` judges a single frame, `MeanLivenessCheck
 - Create: `app/domain/ports/metrics.py`
 - Create: `app/domain/checks/__init__.py`, `base.py`, `quality.py`, `liveness.py`, `motion.py`, `chains.py`
 - Create: `app/infrastructure/pipeline/metrics.py`
+- Create: `app/application/params.py` (Step 10 creates `GateParams`/`MultiframeParams` here)
 - Modify: `app/infrastructure/pipeline/image_quality.py` (becomes a shim delegating to the chain)
 - Test: `tests/test_domain_checks.py`
 
@@ -944,10 +934,11 @@ Two protocols, not one: `MinSizeCheck` judges a single frame, `MeanLivenessCheck
 - Produces:
   - `app.domain.ports.metrics.FaceImageMetrics` — `crop(image_bgr, bbox) -> np.ndarray`, `gray(crop_bgr) -> np.ndarray`, `laplacian_variance(gray) -> float`, `mean_brightness(gray) -> float`
   - `app.domain.checks.base.Frame(image_bgr, detected, metrics, scorer=None)` with `cached_property` `crop`, `gray`, `liveness_score`
-  - `app.domain.checks.base.FrameSequence(frames, min_distance_source=...)` with `cached_property` `liveness_scores`, `mean_liveness`, `max_pairwise_distance`, `keypoints`, `view_change_spread`, `planarity_residual`
+  - `app.domain.checks.base.FrameSequence(frames: list[Frame])` with `cached_property` `liveness_scores`, `mean_liveness`, `max_pairwise_distance`, `keypoints`, `view_change_spread`, `planarity_residual`
   - `app.domain.checks.base.FrameCheck` / `SequenceCheck` protocols, each with `name: str` and `verify(...) -> None`
   - `app.domain.checks.chains.build_quality_chain(gate) -> list[FrameCheck]`, `build_single_frame_chain(gate) -> list[FrameCheck]`, `build_sequence_chain(params) -> list[SequenceCheck]`, `planarity_enabled(params) -> bool`
   - `app.infrastructure.pipeline.metrics.OpenCvFaceImageMetrics`
+  - `app.application.params.GateParams`, `MultiframeParams`
 
 - [ ] **Step 1: Write the failing check tests**
 
@@ -961,6 +952,7 @@ from app.application.params import GateParams, MultiframeParams
 from app.domain.checks.base import Frame, FrameSequence
 from app.domain.checks.chains import (
     build_quality_chain,
+    build_single_frame_chain,
     build_sequence_chain,
     planarity_enabled,
 )
@@ -1103,7 +1095,16 @@ class FaceImageMetrics(Protocol):
 import cv2
 import numpy as np
 
-from app.infrastructure.pipeline.image_quality import _crop_face_bgr
+
+def _crop_face_bgr(image_bgr: np.ndarray, bbox: np.ndarray) -> np.ndarray:
+    """Tight crop from InsightFace-style ``[x1, y1, x2, y2]`` bbox."""
+    h, w = image_bgr.shape[:2]
+    x1, y1, x2, y2 = (float(v) for v in np.asarray(bbox, dtype=np.float64).reshape(-1)[:4])
+    ix1 = max(0, min(w - 1, int(np.floor(x1))))
+    iy1 = max(0, min(h - 1, int(np.floor(y1))))
+    ix2 = max(ix1 + 1, min(w, int(np.ceil(x2))))
+    iy2 = max(iy1 + 1, min(h, int(np.ceil(y2))))
+    return image_bgr[iy1:iy2, ix1:ix2]
 
 
 class OpenCvFaceImageMetrics:
@@ -1122,9 +1123,19 @@ class OpenCvFaceImageMetrics:
         return float(gray.mean())
 ```
 
-Move `_crop_face_bgr` into `metrics.py` and import it the other way round if you prefer; the constraint is only that the cropping arithmetic is not duplicated.
+`_crop_face_bgr` now lives in `metrics.py`, not `image_quality.py` — the cropping arithmetic is defined exactly once.
 
-- [ ] **Step 4: Write `app/domain/checks/base.py`**
+- [ ] **Step 4: Make `image_quality.py` re-export `_crop_face_bgr`**
+
+Add this line near the top of `app/infrastructure/pipeline/image_quality.py` (the shim created in Task 3):
+
+```python
+from app.infrastructure.pipeline.metrics import _crop_face_bgr
+```
+
+This is the import direction reversed from earlier drafts of this plan: `metrics.py` now owns the function, and `image_quality.py` re-exports it. This is what lets Task 11 delete `image_quality.py` without breaking `OpenCvFaceImageMetrics`, since `metrics.py` no longer depends on the module Task 11 removes.
+
+- [ ] **Step 5: Write `app/domain/checks/base.py`**
 
 ```python
 from dataclasses import dataclass, field
@@ -1228,7 +1239,7 @@ class SequenceCheck(Protocol):
 
 Drop the unused `field` import if your editor flags it.
 
-- [ ] **Step 5: Write `app/domain/checks/quality.py`**
+- [ ] **Step 6: Write `app/domain/checks/quality.py`**
 
 Every message string below is copied verbatim from `ensure_face_quality`. Do not reformat the specifiers.
 
@@ -1314,7 +1325,7 @@ class BrightnessMaxCheck:
             )
 ```
 
-- [ ] **Step 6: Write `app/domain/checks/liveness.py` and `motion.py`**
+- [ ] **Step 7: Write `app/domain/checks/liveness.py` and `motion.py`**
 
 `app/domain/checks/liveness.py`:
 
@@ -1450,7 +1461,7 @@ class PlanarityCheck:
             )
 ```
 
-- [ ] **Step 7: Write `app/domain/checks/chains.py`**
+- [ ] **Step 8: Write `app/domain/checks/chains.py`**
 
 ```python
 from app.domain.checks.base import FrameCheck, SequenceCheck
@@ -1529,7 +1540,7 @@ def build_sequence_chain(params) -> list[SequenceCheck]:
     return chain
 ```
 
-- [ ] **Step 8: Add the Review Focus #3 test**
+- [ ] **Step 9: Add the Review Focus #3 test**
 
 Append to `tests/test_domain_checks.py`:
 
@@ -1623,9 +1634,9 @@ def test_liveness_score_is_computed_once_per_frame():
     assert scorer.calls == 1, "cached_property must not re-run inference"
 ```
 
-`GateParams` and `MultiframeParams` land in Task 5; this test file imports them. Create `app/application/params.py` as part of this task's Step 9 so the test can run — that is the one piece of the application layer this task needs.
+`GateParams` and `MultiframeParams` land in Task 5; this test file imports them. Create `app/application/params.py` as part of this task's Step 10 so the test can run — that is the one piece of the application layer this task needs.
 
-- [ ] **Step 9: Create `app/application/params.py`**
+- [ ] **Step 10: Create `app/application/params.py`**
 
 ```python
 from dataclasses import dataclass
@@ -1656,9 +1667,9 @@ class MultiframeParams:
 
 Also create empty `app/application/__init__.py`.
 
-- [ ] **Step 10: Reduce `image_quality.py` to a shim over the chain**
+- [ ] **Step 11: Reduce `image_quality.py` to a shim over the chain**
 
-`app/infrastructure/pipeline/image_quality.py` keeps `_crop_face_bgr` and replaces the body of `ensure_face_quality` with a chain run, so the legacy call sites in `routes.py` keep working until Task 9 deletes them:
+`app/infrastructure/pipeline/image_quality.py` re-exports `_crop_face_bgr` from `metrics.py` (Step 4) and replaces the body of `ensure_face_quality` with a chain run, so the legacy call sites in `routes.py` keep working until Task 9 deletes them:
 
 ```python
 def ensure_face_quality(
@@ -1695,17 +1706,17 @@ def ensure_face_quality(
 
 The imports are function-local to avoid a cycle with `metrics.py`'s import of `_crop_face_bgr`. Task 11 deletes this function.
 
-- [ ] **Step 11: Run the check tests to verify they pass**
+- [ ] **Step 12: Run the check tests to verify they pass**
 
 Run: `python -m pytest tests/test_domain_checks.py -v`
 Expected: every test PASSED. If `test_min_size_check_message_is_verbatim` fails on the number format, compare against the legacy f-string character by character rather than adjusting the test.
 
-- [ ] **Step 12: Run the whole suite, including the existing quality tests**
+- [ ] **Step 13: Run the whole suite, including the existing quality tests**
 
 Run: `python -m pytest -q`
 Expected: baseline count + new tests, zero failures. The pre-existing image-quality tests now exercise the chain through the shim — if any of them fails, the chain's order or a message string is wrong, not the test.
 
-- [ ] **Step 13: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
 graphify update .
@@ -1748,6 +1759,7 @@ Create `tests/test_application_single_frame.py`:
 
 ```python
 import base64
+import inspect
 
 import numpy as np
 import pytest
@@ -1874,8 +1886,18 @@ def test_enroll_with_liveness_true_returns_the_score():
     assert writer.upserts[0][0] == "fixed-id"
 
 
-def test_check_face_does_not_write_to_the_store():
-    writer = RecordingWriter()
+def test_check_face_takes_no_writer_and_returns_no_score_without_liveness():
+    """`/v1/faces/check` validates; it must never be able to persist.
+
+    Enrollment's RecordingWriter test (above) covers the case where a writer
+    *is* wired in. Here the guarantee is structural: CheckFaceUseCase cannot
+    write because no writer can be handed to it. Asserting on the constructor
+    signature pins that, where probing a private attribute would not.
+    """
+    params = inspect.signature(CheckFaceUseCase.__init__).parameters
+    assert not [p for p in params if "writer" in p or "store" in p], (
+        f"CheckFaceUseCase must take no writer/store collaborator, got {list(params)}"
+    )
     use_case = CheckFaceUseCase(
         loader=Base64ImageLoader(OpenCvImageDecoder()),
         detector=StubDetector(),
@@ -1885,7 +1907,6 @@ def test_check_face_does_not_write_to_the_store():
         image_base64=_png_base64(), liveness=False, limits=LIMITS, gate=STRICT_GATE
     )
     assert use_case.execute(request).liveness_score is None
-    assert writer.upserts == []
 
 
 def test_loader_strips_a_data_url_prefix():
@@ -1899,10 +1920,8 @@ def test_loader_rejects_non_base64_with_the_legacy_message():
     loader = Base64ImageLoader(OpenCvImageDecoder())
     with pytest.raises(InvalidImageError) as exc:
         loader.load("!!!not base64!!!", limits=LIMITS)
-    assert str(exc.value) in {"invalid image_base64", "empty image payload"}
+    assert str(exc.value) == "invalid image_base64"
 ```
-
-The last assertion accepts either message because `base64.b64decode(validate=False)` silently drops invalid characters, so a garbage string may decode to empty bytes and surface `decode_and_resize`'s own error instead. Read `app/infrastructure/imaging.py` and replace the set with the single message that actually fires — do not leave the `in {...}` form in the committed test.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -2236,20 +2255,30 @@ def _png_base64(value: int = 128) -> str:
 
 
 class SpreadDetector:
-    """Returns a different embedding per call so inter-frame distance is > 0."""
+    """Returns a different embedding per call so inter-frame distance is > 0.
+
+    `kps` is either a single (5, 2) array shared by every frame, or a list of
+    them — one per call — so a test can give each frame distinct landmarks.
+    """
 
     def __init__(self, kps=None) -> None:
         self.index = 0
         self.kps = kps
 
+    def _kps_for_this_call(self):
+        if isinstance(self.kps, list):
+            return self.kps[self.index % len(self.kps)]
+        return self.kps
+
     def detect_bgr(self, image_bgr) -> DetectedFace:
         vector = np.zeros(512, dtype=np.float32)
         vector[self.index % 512] = 1.0
+        kps = self._kps_for_this_call()
         self.index += 1
         return DetectedFace(
             embedding=vector,
             bbox=np.asarray([0.0, 0.0, 100.0, 100.0], dtype=np.float32),
-            kps=self.kps,
+            kps=kps,
         )
 
 
@@ -2346,11 +2375,22 @@ def test_returns_none_residual_when_both_motion_thresholds_are_zero():
 # --- Review Focus #3 -------------------------------------------------------
 def test_multiframe_response_reports_residual_with_planarity_disabled():
     """min_planarity == 0 but min_view_change > 0 must still report a number."""
-    kps = np.asarray(
+    # The two frames carry DIFFERENT kps: ViewChangeCheck needs a nonzero
+    # view_change_spread to pass, and identical keypoints across frames give
+    # a spread of exactly 0.0 (max - min over one repeated value), which
+    # would make this check raise before the assertion below ever runs.
+    # kps_frontal has equal eye/mouth-corner widths (no foreshortening);
+    # kps_turned narrows the interocular distance to simulate a head turn,
+    # so view_change (log(interocular/vertical)) differs between the two.
+    kps_frontal = np.asarray(
         [[30.0, 40.0], [70.0, 40.0], [50.0, 60.0], [35.0, 80.0], [65.0, 80.0]],
         dtype=np.float32,
     )
-    use_case = _use_case(kps=kps)
+    kps_turned = np.asarray(
+        [[38.0, 40.0], [62.0, 40.0], [50.0, 60.0], [35.0, 80.0], [65.0, 80.0]],
+        dtype=np.float32,
+    )
+    use_case = _use_case(kps=[kps_frontal, kps_turned])
     request = MultiframeRequest(
         images_base64=[_png_base64(), _png_base64(200)],
         limits=LIMITS,
@@ -2360,8 +2400,6 @@ def test_multiframe_response_reports_residual_with_planarity_disabled():
     assert result.planarity_residual is not None
     assert isinstance(result.planarity_residual, float)
 ```
-
-If `test_multiframe_response_reports_residual_with_planarity_disabled` fails because the identical keypoints give a view-change spread of exactly 0.0, lower `min_view_change` no further — instead vary the keypoints per frame via a second `SpreadDetector` field. The assertion to keep is `planarity_residual is not None`.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -2875,7 +2913,7 @@ The TOCTOU race between `has_running()` and `create_run()` is **left open on pur
 - Produces:
   - `RebuildParams(min_score: float | None, min_size: int | None, top_k: int | None)` — passed through to `GroupRebuildService.start` unchanged, which keeps resolving its own defaults from `Settings`.
   - `GroupsListParams(min_size: int, fallback_threshold: float)`
-  - `app.domain.errors.GroupRebuildConflictError`, `app.domain.errors.InvalidGroupSizeError`
+  - `app.domain.errors.GroupRebuildConflictError`, `app.domain.errors.InvalidGroupSizeError`, `app.domain.errors.GroupRunNotFoundError`
   - `StartGroupRebuildUseCase(service).execute(*, store, settings, params) -> str` returning the `run_id`
   - `GroupsQueryService(unit_of_work)` — `latest_groups(params) -> GroupSnapshotView`, `list_runs() -> list[RebuildRunView]`, `get_run(run_id: str) -> RebuildRunView`
   - `GroupSnapshotView(threshold: float, groups: list[tuple[list[str], int]], run_id: str | None, built_at: datetime | None)`
@@ -3185,7 +3223,7 @@ def __init__(self, session_factory, *, lock=None) -> None:
     self._lock = lock if lock is not None else ThreadRebuildLock()
 ```
 
-and replace the two direct `self._lock.acquire(...)` / `self._lock.release()` call sites with the same calls against the port — they are already signature-compatible, so the bodies do not change. Import `ThreadRebuildLock` from `app.infrastructure.locks.thread_lock`.
+and replace the three direct lock call sites — `self._lock.acquire(blocking=False)`, `self._lock.release()`, and `self._lock.locked()` (used in the `finally` branch of `execute()`) — with the same calls against the port; they are already signature-compatible now that `RebuildLock` declares `locked()` too, so the bodies do not change. Import `ThreadRebuildLock` from `app.infrastructure.locks.thread_lock`.
 
 Leave `has_running()` / `create_run()` / `commit()` exactly as they are. Add a comment above them:
 
@@ -3230,7 +3268,7 @@ The has_running/create_run race is left open and documented, per the spec."
 - Rewrite: `app/api/dependencies.py` (replacing `app/deps.py`)
 - Create: `app/api/routers/__init__.py`, `faces.py`, `liveness.py`, `groups.py`, `system.py`
 - Delete: `app/api/routes.py`, `app/deps.py`
-- Modify: `app/api/schemas.py` → re-export shim over `app/api/schemas/` (one test imports it)
+- Modify: `app/api/schemas.py` → re-export shim over `app/api/schemas/` (one test imports it), `tests/test_api_faces.py` (repoint the `settings_dep` import)
 - Test: `tests/test_api_params_builder.py`, `tests/test_route_order.py`
 
 **Interfaces:**
@@ -3250,14 +3288,14 @@ git rm app/api/schemas.py --cached
 mkdir -p app/api/schemas
 ```
 
-Move the 25 models out of the old `app/api/schemas.py` into four modules by tag, keeping every field, default, `Field(...)` constraint and `ConfigDict` byte-identical:
+Move the 26 models out of the old `app/api/schemas.py` into four modules by tag, keeping every field, default, `Field(...)` constraint and `ConfigDict` byte-identical:
 
 - `app/api/schemas/faces.py` — `FaceImageRequest`, `FaceVerifyRequest`, `FaceSearchRequest`, `FaceListRequest`, `FaceIdResponse`, `CheckResponse`, `UpdateResponse`, `DeleteResponse`, `ClearResponse`, `CountResponse`, `FaceExistsResponse`, `FaceListResponse`, `VerifyResponse`, `SearchHit`, `SearchResponse`
 - `app/api/schemas/liveness.py` — `FaceLivenessRequest`, `LivenessResponse`
 - `app/api/schemas/groups.py` — `GroupsListRequest`, `GroupRebuildRequest`, `FaceGroup`, `GroupsResponse`, `GroupRebuildAccepted`, `GroupRebuildStatus`, `GroupRebuildListResponse`
 - `app/api/schemas/system.py` — `HealthResponse`, `StatsResponse`
 
-Then delete the old module file (`rm app/api/schemas.py`) and have `app/api/schemas/__init__.py` re-export all 25 names, so `from app.api.schemas import X` keeps resolving:
+Then delete the old module file (`rm app/api/schemas.py`) and have `app/api/schemas/__init__.py` re-export all 26 names, so `from app.api.schemas import X` keeps resolving:
 
 ```python
 from app.api.schemas.faces import (
@@ -3712,8 +3750,7 @@ def test_groups_rebuild_collection_before_run_id(client):
 
 def test_openapi_has_exactly_four_tag_sections(client):
     spec = client.get("/openapi.json").json()
-    assert [t["name"] for t in spec["openapi_tags"] if False] == [] or True  # see below
-    assert [t["name"] for t in spec.get("tags", [])] == [
+    assert [t["name"] for t in spec["tags"]] == [
         "Faces", "Liveness", "Groups", "System",
     ]
     counts: dict[str, int] = {}
@@ -3724,7 +3761,7 @@ def test_openapi_has_exactly_four_tag_sections(client):
     assert counts == {"Faces": 10, "Liveness": 1, "Groups": 4, "System": 2}
 ```
 
-Delete the nonsense `openapi_tags` assertion line before committing — it was a scaffolding note. The real assertions are the `spec["tags"]` order and the per-tag operation counts.
+`spec["openapi_tags"]` is not a key on the served OpenAPI document — `openapi_tags` is only the FastAPI constructor kwarg (Task 10 passes it as `openapi_tags=OPENAPI_TAGS`); FastAPI renders it into the document's `tags` key. The assertions above read `spec["tags"]` for the order and the per-tag operation counts.
 
 - [ ] **Step 9: Run the route-order test to verify it fails**
 
@@ -4103,7 +4140,23 @@ def stats(queries=Depends(system_queries_dep)) -> StatsResponse:
 
 This is the one surviving `HTTPException`: `/health` returns `503 {"detail": "dependencies not ready"}` for a *degraded-but-reachable* system, which is not an exceptional condition to raise inward. Keeping it here is the pragmatic exception the spec allows; it stays inside `app/api/`, so no layer rule is broken.
 
-- [ ] **Step 14: Delete the monolith**
+- [ ] **Step 14: Repoint `tests/test_api_faces.py`'s `settings_dep` import**
+
+`settings_dep` is moving from `app/deps.py` (deleted in the next step) to `app/api/dependencies.py` (Step 6). `tests/test_api_faces.py:7` still imports it from the old location and overrides it on `app.dependency_overrides` at line 25 — if this import is not repointed to the same function object the routers now depend on, the override silently does nothing and those tests start hitting real settings.
+
+Before:
+
+```python
+from app.deps import settings_dep
+```
+
+After:
+
+```python
+from app.api.dependencies import settings_dep
+```
+
+- [ ] **Step 15: Delete the monolith**
 
 ```bash
 git rm app/api/routes.py app/deps.py
@@ -4111,10 +4164,10 @@ git rm app/api/routes.py app/deps.py
 
 `app/main.py` still imports them — that breaks until Task 10. Do Task 10 before running the suite; the two tasks share one green bar. If you are running tasks with independent review gates, merge Tasks 9 and 10 into a single reviewed unit.
 
-- [ ] **Step 15: Commit (red suite is expected here)**
+- [ ] **Step 16: Commit (red suite is expected here)**
 
 ```bash
-git add -A app/api tests/test_api_params_builder.py tests/test_route_order.py
+git add -A app/api tests/test_api_params_builder.py tests/test_route_order.py tests/test_api_faces.py
 git commit -m "refactor(api): split the 541-line routes.py into four tagged routers
 
 Handlers now build params, call one use case, and shape a response. The
@@ -4403,8 +4456,8 @@ Four openapi_tags give Swagger four sections."
 The refactor is only finished when the old import paths are gone — otherwise the next contributor adds code against them.
 
 **Files:**
-- Delete: `app/errors.py`, `app/imaging.py`, `app/matching/`, `app/store/`, `app/db/`, `app/jobs/`, `app/pipeline/`
-- Modify: every importer of a deleted path (tests included)
+- Delete: `app/errors.py`, `app/imaging.py`, `app/matching/`, `app/store/`, `app/db/`, `app/jobs/`, `app/pipeline/`, `app/infrastructure/pipeline/image_quality.py`
+- Modify: `app/infrastructure/pipeline/metrics.py` (keeps `_crop_face_bgr`, which is why it survives), every other importer of a deleted path (tests included)
 - Create: `tests/test_layering.py` (replacing `tests/test_domain_layering.py`)
 - Modify: `README.md`, `docs/` endpoint list if the tag names appear there
 
