@@ -4,6 +4,25 @@ from pathlib import Path
 BASELINE = Path(__file__).parent / "contract" / "openapi_baseline.json"
 
 
+def _success_schemas(responses: dict) -> str:
+    """Every 2xx response schema, keyed by status.
+
+    Not just "200": enroll answers 201 and group rebuild answers 202, so
+    hardcoding 200 would leave the response model of the only two endpoints
+    that create things completely unconstrained.
+    """
+    return json.dumps(
+        {
+            status: response.get("content", {})
+            .get("application/json", {})
+            .get("schema", {})
+            for status, response in responses.items()
+            if status.startswith("2")
+        },
+        sort_keys=True,
+    )
+
+
 def _signature(spec: dict) -> dict:
     """Path + method + status codes + response schema refs, ignoring tags/summaries."""
     out: dict = {}
@@ -19,14 +38,14 @@ def _signature(spec: dict) -> dict:
                     .get("schema", {}),
                     sort_keys=True,
                 ),
-                "response": json.dumps(
-                    op["responses"]
-                    .get("200", {})
-                    .get("content", {})
-                    .get("application/json", {})
-                    .get("schema", {}),
+                "parameters": json.dumps(
+                    sorted(
+                        (p.get("in"), p.get("name"), p.get("required", False))
+                        for p in op.get("parameters", [])
+                    ),
                     sort_keys=True,
                 ),
+                "response": _success_schemas(op.get("responses", {})),
             }
     return out
 

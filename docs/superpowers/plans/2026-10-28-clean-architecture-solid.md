@@ -128,6 +128,25 @@ from pathlib import Path
 BASELINE = Path(__file__).parent / "contract" / "openapi_baseline.json"
 
 
+def _success_schemas(responses: dict) -> str:
+    """Every 2xx response schema, keyed by status.
+
+    Not just "200": enroll answers 201 and group rebuild answers 202, so
+    hardcoding 200 would leave the response model of the only two endpoints
+    that create things completely unconstrained.
+    """
+    return json.dumps(
+        {
+            status: response.get("content", {})
+            .get("application/json", {})
+            .get("schema", {})
+            for status, response in responses.items()
+            if status.startswith("2")
+        },
+        sort_keys=True,
+    )
+
+
 def _signature(spec: dict) -> dict:
     """Path + method + status codes + response schema refs, ignoring tags/summaries."""
     out: dict = {}
@@ -143,14 +162,14 @@ def _signature(spec: dict) -> dict:
                     .get("schema", {}),
                     sort_keys=True,
                 ),
-                "response": json.dumps(
-                    op["responses"]
-                    .get("200", {})
-                    .get("content", {})
-                    .get("application/json", {})
-                    .get("schema", {}),
+                "parameters": json.dumps(
+                    sorted(
+                        (p.get("in"), p.get("name"), p.get("required", False))
+                        for p in op.get("parameters", [])
+                    ),
                     sort_keys=True,
                 ),
+                "response": _success_schemas(op.get("responses", {})),
             }
     return out
 
@@ -739,9 +758,17 @@ git mv app/pipeline/fake.py app/infrastructure/pipeline/fake.py
 git mv app/pipeline/onnx_liveness.py app/infrastructure/pipeline/onnx_liveness.py
 git mv app/pipeline/fake_liveness.py app/infrastructure/pipeline/fake_liveness.py
 git mv app/pipeline/image_quality.py app/infrastructure/pipeline/image_quality.py
-git mv app/pipeline/device.py app/infrastructure/pipeline/device.py   # if the GPU merge added it
+git mv app/pipeline/device.py app/infrastructure/pipeline/device.py
 touch app/infrastructure/db/__init__.py app/infrastructure/store/__init__.py app/infrastructure/pipeline/__init__.py
 ```
+
+`app/pipeline/device.py` definitely exists — Task 0's merge of `feat/face-device-auto-gpu` added
+it. Its public surface is `ResolvedDevice` (a frozen dataclass: `requested: str`,
+`effective: str`, `providers: list[str]`, `ctx_id: int`, `fallback_reason: str | None = None`)
+and `resolve_face_device(requested: str, *, available_providers: list[str] | None = None) ->
+ResolvedDevice`. Its `app/pipeline/device.py` shim must re-export **both** names:
+`tests/test_production_wiring.py` imports `ResolvedDevice` at module level and
+`tests/test_device_resolve.py` unit-tests `resolve_face_device` directly.
 
 Fix the resulting intra-package imports (`app.errors` → `app.domain.errors`, `app.pipeline.base` → `app.domain.face` / `app.domain.ports.pipeline`, `app.pipeline.planarity` → `app.domain.planarity`, `app.db.models` → `app.infrastructure.db.models`). Run `python -c "import app.main"` after each batch; it will name the first broken import.
 
@@ -758,6 +785,17 @@ __all__ = ["decode_and_resize"]
 `app/matching/*.py`: explicit re-exports from `app.domain.matching.*` — list the real public names, never `*`. `app/store/__init__.py`, `app/store/qdrant.py`, `app/store/memory.py`, `app/db/__init__.py`, `app/db/session.py`, `app/db/repository.py`, `app/db/models.py`, `app/pipeline/*.py`: the same pattern, one re-export line per public name.
 
 These shims exist only so Tasks 3–10 can land one at a time without breaking the suite. Task 11 deletes every shim and rewrites the importers.
+
+**Leave `app/main.py`'s imports pointing at the shim paths in this task.** Do not "tidy" them
+onto the new `app.infrastructure.*` paths — `tests/test_production_wiring.py` patches six
+production collaborators by *string* path (`app.pipeline.device.resolve_face_device`,
+`app.pipeline.onnx_insightface.InsightFacePipeline`, `app.store.qdrant.QdrantFaceStore.from_settings`
+and friends), and those patches work right now **only** because `main.py`'s lazy
+`from app.pipeline.device import resolve_face_device` reads the shim module's attribute at call
+time. Repoint the imports here and those tests start patching a module production no longer
+consults: they either error or pass vacuously while dialing a real unreachable Postgres. Task 10
+is the commit that switches production to the new paths, and it repoints all 11 patch targets in
+the same commit.
 
 - [ ] **Step 4: Write the adapter test**
 
@@ -4186,12 +4224,15 @@ Suite is red until the bootstrap task rewires main.py."
 **Files:**
 - Create: `app/bootstrap/__init__.py`, `app/bootstrap/lifespan.py`, `app/bootstrap/app_factory.py`
 - Rewrite: `app/main.py`
+- Modify: `tests/test_production_wiring.py` (11 string-path monkeypatch targets — see Step 6)
 - Test: `tests/test_bootstrap.py`; `tests/test_route_order.py` turns green here
 
 **Interfaces:**
 - Consumes: the four routers, `exception_handlers.register`, every infrastructure adapter.
 - Produces:
   - `app.bootstrap.lifespan.wire_database(app, database_url) -> None` (the old `_wire_database`, unchanged behaviour including the interrupted-run sweep)
+  - `app.bootstrap.lifespan.wire_stateless_adapters(app) -> None`
+  - `app.bootstrap.lifespan.build_insightface_with_fallback(settings, resolved: ResolvedDevice) -> tuple[InsightFacePipeline, ResolvedDevice]` (moved from `app/main.py`, body unchanged)
   - `app.bootstrap.lifespan.production_lifespan(app)` — async context manager
   - `app.bootstrap.app_factory.create_app(*, testing: bool = False) -> FastAPI`
   - `app.bootstrap.app_factory.OPENAPI_TAGS` — the four tag metadata dicts, in display order
@@ -4244,11 +4285,14 @@ Expected: collection error on `app.bootstrap.app_factory`.
 
 - [ ] **Step 3: Write `app/bootstrap/lifespan.py`**
 
-Move `_wire_database` and `_production_lifespan` out of `main.py` verbatim, renamed without the leading underscore, with the import paths updated and the four new `app.state` keys added. The `GroupRun` sweep, the three `try/except` blocks and every log message stay exactly as they are.
+Move `_wire_database`, `build_insightface_with_fallback` and `_production_lifespan` out of `main.py` verbatim, the first and last renamed without the leading underscore, with the import paths updated and the four new `app.state` keys added. The `GroupRun` sweep, the device resolution, the CUDA→CPU retry, every `try/except` block and every log message stay exactly as they are.
 
 ```python
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from sqlalchemy import update
@@ -4262,7 +4306,53 @@ from app.infrastructure.jobs.group_rebuild import GroupRebuildService
 from app.infrastructure.locks.thread_lock import ThreadRebuildLock
 from app.infrastructure.pipeline.metrics import OpenCvFaceImageMetrics
 
+if TYPE_CHECKING:
+    from app.infrastructure.pipeline.device import ResolvedDevice
+    from app.infrastructure.pipeline.onnx_insightface import InsightFacePipeline
+
 logger = logging.getLogger(__name__)
+
+
+def build_insightface_with_fallback(
+    settings, resolved: ResolvedDevice
+) -> tuple[InsightFacePipeline, ResolvedDevice]:
+    """Construct the pipeline on the resolved device, retrying once on CPU.
+
+    A CUDA build can fail at init even when onnxruntime advertises the
+    provider (driver mismatch, exhausted VRAM). Falling back keeps the service
+    up on CPU instead of refusing to start. Moved verbatim from app/main.py.
+    """
+    from app.infrastructure.pipeline.device import ResolvedDevice
+    from app.infrastructure.pipeline.onnx_insightface import InsightFacePipeline
+
+    try:
+        pipe = InsightFacePipeline(
+            settings.model_dir,
+            embedding_dim=settings.embedding_dim,
+            providers=resolved.providers,
+            ctx_id=resolved.ctx_id,
+        )
+        return pipe, resolved
+    except Exception as exc:
+        if resolved.effective != "cuda":
+            raise
+        logger.warning(
+            "CUDA InsightFace init failed (%s); falling back to CPU", exc
+        )
+        cpu = ResolvedDevice(
+            requested=resolved.requested,
+            effective="cpu",
+            providers=["CPUExecutionProvider"],
+            ctx_id=-1,
+            fallback_reason=f"InsightFace CUDA init failed: {exc}",
+        )
+        pipe = InsightFacePipeline(
+            settings.model_dir,
+            embedding_dim=settings.embedding_dim,
+            providers=cpu.providers,
+            ctx_id=cpu.ctx_id,
+        )
+        return pipe, cpu
 
 
 def wire_stateless_adapters(app: FastAPI) -> None:
@@ -4303,14 +4393,31 @@ def wire_database(app: FastAPI, database_url: str) -> None:
 async def production_lifespan(app: FastAPI):
     # Fail fast with a clear message: the service is useless without models and Qdrant.
     from app.config import get_settings
-    from app.infrastructure.pipeline.onnx_insightface import InsightFacePipeline
+    from app.infrastructure.pipeline.device import resolve_face_device
     from app.infrastructure.store.qdrant import QdrantFaceStore
 
     settings = get_settings()
     wire_stateless_adapters(app)
     try:
-        app.state.pipeline = InsightFacePipeline(
-            settings.model_dir, embedding_dim=settings.embedding_dim
+        resolved = resolve_face_device(settings.face_device)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    logger.info(
+        "face device requested=%s effective=%s fallback=%s",
+        resolved.requested,
+        resolved.effective,
+        resolved.fallback_reason,
+    )
+    if resolved.fallback_reason:
+        logger.warning(
+            "FACE_DEVICE fallback requested=%s effective=%s reason=%s",
+            resolved.requested,
+            resolved.effective,
+            resolved.fallback_reason,
+        )
+    try:
+        app.state.pipeline, resolved = build_insightface_with_fallback(
+            settings, resolved
         )
     except Exception as exc:
         logger.error(
@@ -4338,7 +4445,9 @@ async def production_lifespan(app: FastAPI):
     from app.infrastructure.pipeline.onnx_liveness import load_liveness_checker
 
     app.state.liveness = load_liveness_checker(
-        settings.liveness_model_path, crop_scale=settings.liveness_crop_scale
+        settings.liveness_model_path,
+        crop_scale=settings.liveness_crop_scale,
+        providers=resolved.providers,
     )
     if not app.state.liveness.ready():
         logger.warning(
@@ -4349,7 +4458,27 @@ async def production_lifespan(app: FastAPI):
     yield
 ```
 
-If the GPU merge from Task 0 changed the `InsightFacePipeline` constructor (e.g. added a `device` argument), copy that call site as it now stands on main — do not revert it.
+**Do not simplify any of the device logic above.** Four things in this function exist only
+because Task 0 merged `feat/face-device-auto-gpu`, and `tests/test_production_wiring.py` asserts
+on every one of them:
+
+1. `resolve_face_device(settings.face_device)`, with `ValueError` re-raised as `RuntimeError` —
+   a test feeds `FACE_DEVICE=gpu` and expects startup to fail with a message matching `FACE_DEVICE`.
+2. The `"FACE_DEVICE fallback requested=%s effective=%s reason=%s"` warning — a test asserts it
+   is logged when `auto` resolves down to `cpu`.
+3. `build_insightface_with_fallback`'s CUDA→CPU retry — a test asserts the `ctx_id` sequence is
+   `[0, -1]`, the providers sequence is `[["CUDA…","CPU…"], ["CPU…"]]`, and that
+   `"CUDA InsightFace init failed"` is logged.
+4. `providers=resolved.providers` on `load_liveness_checker` — the same test asserts liveness is
+   loaded CPU-only after a CUDA pipeline failure, which only holds because
+   `build_insightface_with_fallback` **rebinds `resolved`** on the way out. That rebinding is why
+   the call is `app.state.pipeline, resolved = build_insightface_with_fallback(...)` and not a
+   plain assignment — dropping the tuple unpack passes the stale CUDA providers to liveness.
+
+Note also that `app/main.py` on this branch is **197 lines**, not the 135 this task's intro
+mentions: `main`'s own Postgres/group-rebuild wiring plus the GPU branch both landed before the
+refactor started. The body above is the post-merge content with the import paths rewritten; it is
+the authority, not the line count.
 
 - [ ] **Step 4: Write `app/bootstrap/app_factory.py`**
 
@@ -4422,31 +4551,79 @@ __all__ = ["app", "create_app"]
 
 `create_app` is re-exported because four existing tests do `from app.main import create_app`.
 
-- [ ] **Step 6: Run the bootstrap and route-order tests**
+- [ ] **Step 6: Repoint the string-path monkeypatch targets**
+
+This step is not cosmetic and it is not optional. `tests/test_production_wiring.py` patches
+production collaborators by *string path*, and this is the task where production stops importing
+the old module paths. A re-export shim does **not** rescue a string patch: `monkeypatch.setattr(
+"app.pipeline.device.resolve_face_device", fake)` sets the attribute on the *shim* module, while
+`app/bootstrap/lifespan.py` reads the real `app.infrastructure.pipeline.device` — so the fake is
+installed and never consulted. The test then either raises `AttributeError` (for the names that
+no longer exist at the old path) or passes vacuously while the real code dials an unreachable
+Postgres host and loads real ONNX models.
+
+There are 11 such targets across 5 module paths. Rewrite every one:
+
+| Old target string | New target string | Occurrences |
+|---|---|---|
+| `app.main._wire_database` | `app.bootstrap.lifespan.wire_database` | 3 |
+| `app.store.qdrant.QdrantFaceStore.from_settings` | `app.infrastructure.store.qdrant.QdrantFaceStore.from_settings` | 3 |
+| `app.pipeline.onnx_liveness.load_liveness_checker` | `app.infrastructure.pipeline.onnx_liveness.load_liveness_checker` | 3 |
+| `app.pipeline.onnx_insightface.InsightFacePipeline` | `app.infrastructure.pipeline.onnx_insightface.InsightFacePipeline` | 4 |
+| `app.pipeline.onnx_liveness.OnnxLivenessChecker` | `app.infrastructure.pipeline.onnx_liveness.OnnxLivenessChecker` | 1 |
+| `app.pipeline.device.resolve_face_device` | `app.infrastructure.pipeline.device.resolve_face_device` | 2 |
+
+Two notes. First, row one carries a **rename as well as a move**: `_wire_database` loses its
+leading underscore when it becomes `app/bootstrap/lifespan.py`'s public `wire_database`, so both
+halves of the string change. Second, `app.config.get_settings` targets do **not** change —
+`app/config.py` never moves in this refactor; leave those three alone.
+
+Find them all before editing, and confirm none survive after:
+
+```bash
+grep -rn 'monkeypatch.setattr' tests/ | grep 'app\.main\._wire_database\|app\.pipeline\.\|app\.store\.'
+```
+
+Expected after the edit: no output. One more module patches by string outside this file —
+`tests/test_onnx_liveness_unit.py` patches `app.pipeline.onnx_liveness`; check whether it uses a
+string path or an imported module object, and repoint it only if it is a string.
+
+- [ ] **Step 7: Verify the wiring tests really exercise the fakes**
+
+Run: `python -m pytest tests/test_production_wiring.py -v --durations=10`
+Expected: all PASSED, and every duration under one second. A multi-second test means a patch
+missed and the test is dialing a real host — treat that as a failure even though pytest reports
+green, and find the target you did not repoint.
+
+- [ ] **Step 8: Run the bootstrap and route-order tests**
 
 Run: `python -m pytest tests/test_bootstrap.py tests/test_route_order.py -v`
 Expected: all PASSED. If `test_openapi_has_exactly_four_tag_sections` reports the wrong counts, compare the per-tag numbers against the Global Constraints line — a count of 11 for `Faces` usually means the liveness route got the wrong tag.
 
-- [ ] **Step 7: Run the OpenAPI contract test**
+- [ ] **Step 9: Run the OpenAPI contract test**
 
 Run: `python -m pytest tests/test_openapi_contract.py -v`
 Expected: 2 PASSED. The signature helper deliberately ignores `tags`, so adding them does not break the contract. Any other failure here is a real regression — a changed path, status, or response schema. Fix the code, not the baseline.
 
-- [ ] **Step 8: Run the whole suite**
+- [ ] **Step 10: Run the whole suite**
 
 Run: `python -m pytest -q`
 Expected: the Task 0 baseline count plus every test added in Tasks 1–10, zero failures. This is the first green bar since Task 9.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 graphify update .
-git add app/bootstrap app/main.py tests/test_bootstrap.py
+git add app/bootstrap app/main.py tests/test_bootstrap.py tests/test_production_wiring.py
 git commit -m "refactor(bootstrap): extract the composition root from main.py
 
 main.py is now two lines. Router registration order is documented because it
 is load-bearing: the liveness and groups routers must precede faces/{face_id}.
-Four openapi_tags give Swagger four sections."
+Four openapi_tags give Swagger four sections.
+
+test_production_wiring.py's 11 string-path monkeypatch targets are repointed at
+the new module paths; a shim cannot carry a string patch, so they move with the
+production imports."
 ```
 
 ---
