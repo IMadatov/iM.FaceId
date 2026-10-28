@@ -105,10 +105,10 @@ def test_load_liveness_checker_retries_cuda_failure_on_cpu(monkeypatch, caplog):
         return sentinel
 
     monkeypatch.setattr(
-        "app.pipeline.onnx_liveness.OnnxLivenessChecker", construct
+        "app.infrastructure.pipeline.onnx_liveness.OnnxLivenessChecker", construct
     )
 
-    with caplog.at_level("WARNING", logger="app.pipeline.onnx_liveness"):
+    with caplog.at_level("WARNING", logger="app.infrastructure.pipeline.onnx_liveness"):
         result = load_liveness_checker(
             "model.onnx",
             providers=["CUDAExecutionProvider", "CPUExecutionProvider"],

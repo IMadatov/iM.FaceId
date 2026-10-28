@@ -1,19 +1,3 @@
-import numpy as np
+from app.domain.matching.cosine import cosine_distance, cosine_similarity, is_match
 
-
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    a = a.astype(np.float32, copy=False).reshape(-1)
-    b = b.astype(np.float32, copy=False).reshape(-1)
-    na = np.linalg.norm(a)
-    nb = np.linalg.norm(b)
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
-
-
-def cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
-    return 1.0 - cosine_similarity(a, b)
-
-
-def is_match(score: float, threshold: float) -> bool:
-    return score >= threshold
+__all__ = ["cosine_distance", "cosine_similarity", "is_match"]
