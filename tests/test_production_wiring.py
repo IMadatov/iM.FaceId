@@ -93,6 +93,10 @@ def test_production_retries_cuda_init_on_cpu_and_uses_cpu_for_liveness(
         liveness_calls.append(kwargs)
         return _Ready()
 
+    def fake_wire(app, database_url):
+        app.state.session_factory = object()
+        app.state.group_rebuild = object()
+
     monkeypatch.setattr("app.config.get_settings", lambda: settings)
     monkeypatch.setattr("app.pipeline.device.resolve_face_device", lambda _: cuda)
     monkeypatch.setattr(
@@ -105,6 +109,7 @@ def test_production_retries_cuda_init_on_cpu_and_uses_cpu_for_liveness(
     monkeypatch.setattr(
         "app.pipeline.onnx_liveness.load_liveness_checker", load_liveness
     )
+    monkeypatch.setattr("app.main._wire_database", fake_wire)
 
     with caplog.at_level("WARNING", logger="app.main"):
         app = create_app(testing=False)
@@ -135,6 +140,10 @@ def test_production_warns_when_device_resolution_falls_back(monkeypatch, caplog)
         def ready(self):
             return True
 
+    def fake_wire(app, database_url):
+        app.state.session_factory = object()
+        app.state.group_rebuild = object()
+
     monkeypatch.setattr("app.config.get_settings", lambda: Settings(model_dir="."))
     monkeypatch.setattr(
         "app.pipeline.device.resolve_face_device", lambda _: cpu_fallback
@@ -151,6 +160,7 @@ def test_production_warns_when_device_resolution_falls_back(monkeypatch, caplog)
         "app.pipeline.onnx_liveness.load_liveness_checker",
         lambda *args, **kwargs: _Ready(),
     )
+    monkeypatch.setattr("app.main._wire_database", fake_wire)
 
     with caplog.at_level("WARNING", logger="app.main"):
         with TestClient(create_app(testing=False)):
