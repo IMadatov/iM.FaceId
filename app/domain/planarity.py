@@ -49,7 +49,12 @@ def _get_perspective_transform(src: np.ndarray, dst: np.ndarray) -> np.ndarray |
     module stays free of framework/driver imports). For 4 exact correspondences
     the system is square, not least-squares, so this is the same closed-form
     solve OpenCV performs internally. Returns ``None`` if the system is singular
-    (degenerate/collinear points), mirroring OpenCV's non-finite result.
+    (degenerate/collinear points). This does *not* mirror OpenCV: on an exactly
+    singular 4-point system, ``cv2.getPerspectiveTransform`` returns a finite
+    garbage matrix rather than raising or producing non-finite values, so a
+    degenerate quad used to yield a large meaningless residual that passed the
+    planarity gate. Returning ``None`` here instead surfaces the degeneracy,
+    which denies rather than free-passes an anti-spoof check.
     """
     a_rows = []
     b_vals = []

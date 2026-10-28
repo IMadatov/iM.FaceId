@@ -23,6 +23,7 @@ from app.domain.ports.identity import IdentityFactory
 from app.domain.ports.imaging import ImageDecoder
 from app.domain.ports.liveness import LivenessScorer
 from app.domain.ports.pipeline import FaceDetector, FaceEmbedder, PipelineProbe
+from app.domain.ports.rebuild_lock import RebuildLock
 from app.domain.ports.store import (
     FaceCatalog,
     FaceReader,
@@ -34,6 +35,7 @@ from app.domain.ports.unit_of_work import UnitOfWork
 from app.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 from app.infrastructure.identity import Uuid4IdentityFactory
 from app.infrastructure.imaging import OpenCvImageDecoder
+from app.infrastructure.locks.thread_lock import ThreadRebuildLock
 from app.pipeline.fake import FakeFacePipeline
 from app.pipeline.fake_liveness import FakeLivenessChecker, UnavailableLivenessChecker
 from app.pipeline.onnx_insightface import InsightFacePipeline
@@ -44,10 +46,10 @@ from app.store.qdrant import QdrantFaceStore
 STORE_ROLES = (FaceReader, FaceWriter, FaceSearcher, FaceCatalog, HealthProbe)
 PIPELINE_ROLES = (FaceDetector, FaceEmbedder, PipelineProbe)
 
-# Every (port, adapter) pair the refactor relies on. A port with no adapter
-# yet (ImageDecoder, IdentityFactory, UnitOfWork, RebuildLock) arrives in
-# Task 3 and is added here then; RebuildLock's adapter wraps threading.Lock,
-# a C builtin with no introspectable signature, so it stays unlisted.
+# Every (port, adapter) pair the refactor relies on. RebuildLock itself wraps
+# threading.Lock, a C builtin with no introspectable signature — but
+# ThreadRebuildLock is a real Python class with real methods, so it is
+# introspectable and is listed below.
 PAIRS = [
     (port, adapter)
     for adapter in (MemoryFaceStore, QdrantFaceStore)
@@ -65,6 +67,7 @@ PAIRS = [
     (ImageDecoder, OpenCvImageDecoder),
     (IdentityFactory, Uuid4IdentityFactory),
     (UnitOfWork, SqlAlchemyUnitOfWork),
+    (RebuildLock, ThreadRebuildLock),
 ]
 
 
@@ -100,7 +103,7 @@ def test_adapter_signatures_match_their_port(port, adapter):
 
 def test_every_pair_is_covered():
     """Guard against a port or adapter being silently dropped from PAIRS."""
-    assert len(PAIRS) == 24, f"expected 24 port/adapter pairs, found {len(PAIRS)}"
+    assert len(PAIRS) == 25, f"expected 25 port/adapter pairs, found {len(PAIRS)}"
     ports_covered = {port.__name__ for port, _ in PAIRS}
     assert ports_covered == {
         "FaceReader",
@@ -117,4 +120,5 @@ def test_every_pair_is_covered():
         "ImageDecoder",
         "IdentityFactory",
         "UnitOfWork",
+        "RebuildLock",
     }
