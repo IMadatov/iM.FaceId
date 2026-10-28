@@ -1129,6 +1129,15 @@ class FaceImageMetrics(Protocol):
 
 `app/infrastructure/pipeline/metrics.py`:
 
+> **This file already exists — Task 3 created it, holding `_crop_face_bgr`.** Do not
+> create it and do not redefine `_crop_face_bgr`; ADD `OpenCvFaceImageMetrics` to the
+> existing file and add the `import cv2` line the class needs (Task 3 left the file on
+> numpy only, since the crop arithmetic is pure numpy slicing). Step 4 below, making
+> `image_quality.py` re-export `_crop_face_bgr` from here, is **already satisfied on
+> disk** — verify it rather than re-applying it. The snippet below shows the file's
+> full intended end state, `_crop_face_bgr` included, so you can check what is already
+> there against what should be.
+
 ```python
 import cv2
 import numpy as np
