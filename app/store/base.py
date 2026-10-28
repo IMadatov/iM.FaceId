@@ -1,17 +1,17 @@
-from typing import Protocol
+from app.domain.ports.store import (
+    FaceCatalog,
+    FaceReader,
+    FaceSearcher,
+    FaceStore,
+    FaceWriter,
+    HealthProbe,
+)
 
-import numpy as np
-
-
-class FaceStore(Protocol):
-    def upsert(self, face_id: str, vector: np.ndarray) -> None: ...
-    def get(self, face_id: str) -> np.ndarray | None: ...
-    def delete(self, face_id: str) -> bool: ...
-    def clear(self) -> int: ...
-    def count(self) -> int: ...
-    def list_ids(self, *, limit: int, offset: int) -> list[str]: ...
-    def search(
-        self, vector: np.ndarray, *, limit: int, min_score: float
-    ) -> list[tuple[str, float]]: ...
-    def list_all(self) -> list[tuple[str, np.ndarray]]: ...
-    def ping(self) -> bool: ...
+__all__ = [
+    "FaceCatalog",
+    "FaceReader",
+    "FaceSearcher",
+    "FaceStore",
+    "FaceWriter",
+    "HealthProbe",
+]

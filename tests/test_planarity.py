@@ -1,6 +1,15 @@
 import numpy as np
 import pytest
 
+from app.domain.planarity import (
+    LEFT_EYE,
+    LEFT_MOUTH,
+    NOSE,
+    RIGHT_EYE,
+    RIGHT_MOUTH,
+    _get_perspective_transform,
+    _perspective_transform,
+)
 from app.pipeline.planarity import (
     max_planarity_residual,
     planarity_residual,
@@ -135,3 +144,118 @@ def test_view_change_peaks_at_frontal():
     frontal = view_change(_project(real, 0.0))
     assert frontal > view_change(_project(real, 20.0))
     assert frontal > view_change(_project(real, -20.0))
+
+
+def test_planarity_residual_raises_on_collinear_plane_quad():
+    """A singular 4-point system must deny, not free-pass, the anti-spoof check.
+
+    cv2.getPerspectiveTransform does not raise on an exactly singular quad — it
+    returns finite garbage, which used to produce a meaningless-but-finite
+    residual that slipped past the planarity gate. The hand-written DLT solve
+    raises instead. The two eyes are kept distinct so the failure genuinely
+    comes from the singular homography (plane quad collinear), not the earlier
+    interocular-distance guard.
+    """
+    kps_b = np.zeros((5, 2), dtype=np.float64)
+    kps_b[LEFT_EYE] = [0.0, 0.0]
+    kps_b[RIGHT_EYE] = [10.0, 0.0]
+    kps_b[NOSE] = [5.0, 5.0]
+    kps_b[LEFT_MOUTH] = [20.0, 0.0]
+    kps_b[RIGHT_MOUTH] = [30.0, 0.0]
+    kps_a = kps_b.copy()
+
+    with pytest.raises(ValueError, match="degenerate landmarks"):
+        planarity_residual(kps_a, kps_b)
+
+
+def test_planarity_residual_raises_when_all_keypoints_coincide():
+    """All five keypoints identical is the other singular case Fix 2 pins."""
+    same = np.full((5, 2), 1.0, dtype=np.float64)
+
+    with pytest.raises(ValueError, match="degenerate landmarks"):
+        planarity_residual(same, same)
+
+
+def test_get_perspective_transform_recovers_a_known_homography():
+    """Pin the hand-written DLT solve against a homography built by hand.
+
+    cv2 is not importable from app/domain, so this is pinned against a
+    homography constructed independently rather than differentially. H has a
+    non-trivial projective row (nonzero H[2,0], H[2,1]) so the test actually
+    exercises the perspective terms, not just an affine special case.
+    """
+    h_true = np.array(
+        [
+            [1.2, 0.3, 10.0],
+            [0.1, 0.9, -5.0],
+            [0.0007, 0.0004, 1.0],
+        ],
+        dtype=np.float64,
+    )
+
+    def apply_h(h, points):
+        mapped = []
+        for x, y in points:
+            v = h @ np.array([x, y, 1.0])
+            mapped.append((v[0] / v[2], v[1] / v[2]))
+        return np.array(mapped, dtype=np.float64)
+
+    src = np.array([[0.0, 0.0], [100.0, 0.0], [0.0, 80.0], [60.0, 50.0]])
+    dst = apply_h(h_true, src)
+
+    recovered = _get_perspective_transform(src, dst)
+
+    assert recovered is not None
+    recovered_normalised = recovered / recovered[2, 2]
+    expected_normalised = h_true / h_true[2, 2]
+    assert recovered_normalised == pytest.approx(expected_normalised, abs=1e-6)
+
+    fifth_src = np.array([30.0, 15.0])
+    fifth_dst_expected = apply_h(h_true, fifth_src[None, :])[0]
+    fifth_dst_mapped = _perspective_transform(fifth_src, recovered)
+    assert fifth_dst_mapped == pytest.approx(fifth_dst_expected, abs=1e-4)
+
+
+def test_get_perspective_transform_recovers_h22_zero_ground_truth():
+    """The solver hardcodes h[2][2] = 1.0; this pins that it is not a limitation.
+
+    A homography is only defined up to scale, so when the ground truth has
+    h22 == 0 exactly, the recovered matrix is a *different* rescaling of the
+    same homography (its own h22 forced to 1). Matrix elements are therefore
+    not comparable; only mapped points are. Source points are picked away from
+    the ground truth's vanishing line (w == 0) so the correspondences stay
+    finite, and the inputs are round-tripped through float32 to match what
+    ``_as_kps`` would do to real keypoints before the float64 solve.
+    """
+    h_true = np.array(
+        [
+            [1.5, -0.2, 20.0],
+            [0.05, 1.1, 15.0],
+            [0.002, -0.001, 0.0],
+        ],
+        dtype=np.float64,
+    )
+
+    def apply_h(h, points):
+        mapped = []
+        for x, y in points:
+            v = h @ np.array([x, y, 1.0])
+            mapped.append((v[0] / v[2], v[1] / v[2]))
+        return np.array(mapped, dtype=np.float64)
+
+    src = np.array([[10.0, 5.0], [110.0, 5.0], [10.0, 95.0], [70.0, 10.0]])
+    dst = apply_h(h_true, src)
+
+    # Round-trip through float32, mirroring _as_kps's cast of real keypoints.
+    src_f32 = src.astype(np.float32).astype(np.float64)
+    dst_f32 = dst.astype(np.float32).astype(np.float64)
+
+    recovered = _get_perspective_transform(src_f32, dst_f32)
+    assert recovered is not None
+    assert recovered[2, 2] == 1.0
+
+    fifth_src = np.array([40.0, 150.0])
+    fifth_src_f32 = fifth_src.astype(np.float32).astype(np.float64)
+    fifth_dst_expected = apply_h(h_true, fifth_src[None, :])[0]
+    fifth_dst_mapped = _perspective_transform(fifth_src_f32, recovered)
+    assert fifth_dst_mapped == pytest.approx(fifth_dst_expected, abs=1e-4)

@@ -1,0 +1,1612 @@
+{
+  "components": {
+    "schemas": {
+      "CheckResponse": {
+        "properties": {
+          "liveness_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Score"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "CheckResponse",
+        "type": "object"
+      },
+      "ClearResponse": {
+        "properties": {
+          "cleared": {
+            "default": true,
+            "title": "Cleared",
+            "type": "boolean"
+          },
+          "deleted_count": {
+            "title": "Deleted Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_count"
+        ],
+        "title": "ClearResponse",
+        "type": "object"
+      },
+      "CountResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "CountResponse",
+        "type": "object"
+      },
+      "DeleteResponse": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "face_id"
+        ],
+        "title": "DeleteResponse",
+        "type": "object"
+      },
+      "FaceExistsResponse": {
+        "properties": {
+          "exists": {
+            "default": true,
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "face_id"
+        ],
+        "title": "FaceExistsResponse",
+        "type": "object"
+      },
+      "FaceGroup": {
+        "properties": {
+          "face_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Face Ids",
+            "type": "array"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "face_ids",
+          "size"
+        ],
+        "title": "FaceGroup",
+        "type": "object"
+      },
+      "FaceIdResponse": {
+        "properties": {
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "liveness_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Score"
+          }
+        },
+        "required": [
+          "face_id"
+        ],
+        "title": "FaceIdResponse",
+        "type": "object"
+      },
+      "FaceImageRequest": {
+        "additionalProperties": false,
+        "description": "JSON body for enroll / update: base64 image + optional thresholds.",
+        "properties": {
+          "blur_min_variance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blur Min Variance"
+          },
+          "brightness_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Max"
+          },
+          "brightness_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Min"
+          },
+          "image_base64": {
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "liveness": {
+            "default": false,
+            "title": "Liveness",
+            "type": "boolean"
+          },
+          "liveness_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Threshold"
+          },
+          "min_side_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Side Px"
+          }
+        },
+        "required": [
+          "image_base64"
+        ],
+        "title": "FaceImageRequest",
+        "type": "object"
+      },
+      "FaceListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "title": "FaceListRequest",
+        "type": "object"
+      },
+      "FaceListResponse": {
+        "properties": {
+          "face_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Face Ids",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "face_ids",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "FaceListResponse",
+        "type": "object"
+      },
+      "FaceLivenessRequest": {
+        "additionalProperties": false,
+        "description": "JSON body for multi-frame passive liveness check.",
+        "properties": {
+          "blur_min_variance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blur Min Variance"
+          },
+          "brightness_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Max"
+          },
+          "brightness_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Min"
+          },
+          "images_base64": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "title": "Images Base64",
+            "type": "array"
+          },
+          "liveness_min_distance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Min Distance"
+          },
+          "liveness_min_planarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Min Planarity"
+          },
+          "liveness_min_view_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Min View Change"
+          },
+          "liveness_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Threshold"
+          },
+          "min_side_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Side Px"
+          }
+        },
+        "required": [
+          "images_base64"
+        ],
+        "title": "FaceLivenessRequest",
+        "type": "object"
+      },
+      "FaceSearchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "blur_min_variance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blur Min Variance"
+          },
+          "brightness_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Max"
+          },
+          "brightness_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Min"
+          },
+          "image_base64": {
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "liveness": {
+            "default": false,
+            "title": "Liveness",
+            "type": "boolean"
+          },
+          "liveness_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Threshold"
+          },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
+          "min_side_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Side Px"
+          }
+        },
+        "required": [
+          "image_base64"
+        ],
+        "title": "FaceSearchRequest",
+        "type": "object"
+      },
+      "FaceVerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "blur_min_variance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blur Min Variance"
+          },
+          "brightness_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Max"
+          },
+          "brightness_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brightness Min"
+          },
+          "image_base64": {
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "liveness": {
+            "default": false,
+            "title": "Liveness",
+            "type": "boolean"
+          },
+          "liveness_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Threshold"
+          },
+          "match_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Threshold"
+          },
+          "min_side_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Side Px"
+          }
+        },
+        "required": [
+          "image_base64"
+        ],
+        "title": "FaceVerifyRequest",
+        "type": "object"
+      },
+      "GroupRebuildAccepted": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "running",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "GroupRebuildAccepted",
+        "type": "object"
+      },
+      "GroupRebuildListResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/GroupRebuildStatus"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "GroupRebuildListResponse",
+        "type": "object"
+      },
+      "GroupRebuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score"
+          },
+          "min_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Size"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          }
+        },
+        "title": "GroupRebuildRequest",
+        "type": "object"
+      },
+      "GroupRebuildStatus": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "face_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Face Count"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "group_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Count"
+          },
+          "min_size": {
+            "title": "Min Size",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          },
+          "top_k": {
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "threshold",
+          "top_k",
+          "min_size"
+        ],
+        "title": "GroupRebuildStatus",
+        "type": "object"
+      },
+      "GroupsListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "min_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Size"
+          }
+        },
+        "title": "GroupsListRequest",
+        "type": "object"
+      },
+      "GroupsResponse": {
+        "properties": {
+          "built_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Built At"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/FaceGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "threshold",
+          "groups"
+        ],
+        "title": "GroupsResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "LivenessResponse": {
+        "properties": {
+          "frame_count": {
+            "title": "Frame Count",
+            "type": "integer"
+          },
+          "inter_frame_distance": {
+            "title": "Inter Frame Distance",
+            "type": "number"
+          },
+          "liveness_score": {
+            "title": "Liveness Score",
+            "type": "number"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "planarity_residual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planarity Residual"
+          }
+        },
+        "required": [
+          "liveness_score",
+          "frame_count",
+          "inter_frame_distance"
+        ],
+        "title": "LivenessResponse",
+        "type": "object"
+      },
+      "SearchHit": {
+        "properties": {
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "face_id",
+          "score"
+        ],
+        "title": "SearchHit",
+        "type": "object"
+      },
+      "SearchResponse": {
+        "properties": {
+          "liveness_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Score"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "results",
+          "threshold"
+        ],
+        "title": "SearchResponse",
+        "type": "object"
+      },
+      "StatsResponse": {
+        "properties": {
+          "faces_count": {
+            "title": "Faces Count",
+            "type": "integer"
+          },
+          "pipeline_ok": {
+            "title": "Pipeline Ok",
+            "type": "boolean"
+          },
+          "store_ok": {
+            "title": "Store Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "faces_count",
+          "store_ok",
+          "pipeline_ok"
+        ],
+        "title": "StatsResponse",
+        "type": "object"
+      },
+      "UpdateResponse": {
+        "properties": {
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "liveness_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Score"
+          },
+          "updated": {
+            "default": true,
+            "title": "Updated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "face_id"
+        ],
+        "title": "UpdateResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerifyResponse": {
+        "properties": {
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "liveness_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Liveness Score"
+          },
+          "match": {
+            "title": "Match",
+            "type": "boolean"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "face_id",
+          "match",
+          "score",
+          "threshold"
+        ],
+        "title": "VerifyResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "iM.FaceId",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/v1/faces": {
+      "delete": {
+        "description": "Remove all enrolled face embeddings (manual full wipe).",
+        "operationId": "clear_faces_v1_faces_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear Faces"
+      },
+      "post": {
+        "operationId": "enroll_face_v1_faces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceImageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceIdResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enroll Face"
+      }
+    },
+    "/v1/faces/check": {
+      "post": {
+        "description": "Preflight: same gates as enroll, no store write.",
+        "operationId": "check_face_v1_faces_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceImageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Face"
+      }
+    },
+    "/v1/faces/count": {
+      "get": {
+        "operationId": "count_faces_v1_faces_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Count Faces"
+      }
+    },
+    "/v1/faces/groups/list": {
+      "post": {
+        "operationId": "list_face_groups_v1_faces_groups_list_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupsListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Face Groups"
+      }
+    },
+    "/v1/faces/groups/rebuild": {
+      "get": {
+        "operationId": "list_group_rebuild_runs_v1_faces_groups_rebuild_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupRebuildListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Group Rebuild Runs"
+      },
+      "post": {
+        "operationId": "rebuild_face_groups_v1_faces_groups_rebuild_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupRebuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupRebuildAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rebuild Face Groups"
+      }
+    },
+    "/v1/faces/groups/rebuild/{run_id}": {
+      "get": {
+        "operationId": "get_group_rebuild_status_v1_faces_groups_rebuild__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupRebuildStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Group Rebuild Status"
+      }
+    },
+    "/v1/faces/list": {
+      "post": {
+        "operationId": "list_faces_v1_faces_list_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Faces"
+      }
+    },
+    "/v1/faces/liveness": {
+      "post": {
+        "description": "Passive multi-frame liveness: mean score + inter-frame variation.",
+        "operationId": "check_liveness_v1_faces_liveness_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceLivenessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Liveness"
+      }
+    },
+    "/v1/faces/search": {
+      "post": {
+        "operationId": "search_faces_v1_faces_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Faces"
+      }
+    },
+    "/v1/faces/{face_id}": {
+      "delete": {
+        "operationId": "delete_face_v1_faces__face_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "face_id",
+            "required": true,
+            "schema": {
+              "title": "Face Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Face"
+      },
+      "get": {
+        "operationId": "get_face_v1_faces__face_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "face_id",
+            "required": true,
+            "schema": {
+              "title": "Face Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceExistsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Face"
+      },
+      "put": {
+        "operationId": "update_face_v1_faces__face_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "face_id",
+            "required": true,
+            "schema": {
+              "title": "Face Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceImageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Face"
+      }
+    },
+    "/v1/faces/{face_id}/verify": {
+      "post": {
+        "operationId": "verify_face_v1_faces__face_id__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "face_id",
+            "required": true,
+            "schema": {
+              "title": "Face Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Face"
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "operationId": "stats_v1_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stats"
+      }
+    }
+  }
+}
