@@ -22,6 +22,7 @@ from app.domain.ports.groups import GroupsReader, GroupsWriter
 from app.domain.ports.identity import IdentityFactory
 from app.domain.ports.imaging import ImageDecoder
 from app.domain.ports.liveness import LivenessScorer
+from app.domain.ports.metrics import FaceImageMetrics
 from app.domain.ports.pipeline import FaceDetector, FaceEmbedder, PipelineProbe
 from app.domain.ports.rebuild_lock import RebuildLock
 from app.domain.ports.store import (
@@ -36,6 +37,7 @@ from app.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 from app.infrastructure.identity import Uuid4IdentityFactory
 from app.infrastructure.imaging import OpenCvImageDecoder
 from app.infrastructure.locks.thread_lock import ThreadRebuildLock
+from app.infrastructure.pipeline.metrics import OpenCvFaceImageMetrics
 from app.pipeline.fake import FakeFacePipeline
 from app.pipeline.fake_liveness import FakeLivenessChecker, UnavailableLivenessChecker
 from app.pipeline.onnx_insightface import InsightFacePipeline
@@ -68,6 +70,7 @@ PAIRS = [
     (IdentityFactory, Uuid4IdentityFactory),
     (UnitOfWork, SqlAlchemyUnitOfWork),
     (RebuildLock, ThreadRebuildLock),
+    (FaceImageMetrics, OpenCvFaceImageMetrics),
 ]
 
 
@@ -103,7 +106,7 @@ def test_adapter_signatures_match_their_port(port, adapter):
 
 def test_every_pair_is_covered():
     """Guard against a port or adapter being silently dropped from PAIRS."""
-    assert len(PAIRS) == 25, f"expected 25 port/adapter pairs, found {len(PAIRS)}"
+    assert len(PAIRS) == 26, f"expected 26 port/adapter pairs, found {len(PAIRS)}"
     ports_covered = {port.__name__ for port, _ in PAIRS}
     assert ports_covered == {
         "FaceReader",
@@ -121,4 +124,5 @@ def test_every_pair_is_covered():
         "IdentityFactory",
         "UnitOfWork",
         "RebuildLock",
+        "FaceImageMetrics",
     }
